@@ -46,7 +46,12 @@ interface PaystackVerifyData {
   reference: string;
   amount: number;
   currency: string;
-  metadata: { orderId?: string; bookingId?: string; userId?: string };
+  metadata: {
+    orderId?: string;
+    bookingId?: string;
+    userId?: string;
+    checkoutData?: CheckoutData;
+  };
 }
 
 export type ChargeStatus =
@@ -77,17 +82,22 @@ export interface CheckoutData {
   idempotencyKey?: string;
 }
 
-// ─── Initialize payment (redirect flow) ──────────────────────────────────────
+// ─── Initialize payment (redirect / Paystack-hosted flow) ────────────────────
 
 export async function initializePayment(
   userId: string,
-  payload: { orderId?: string; bookingId?: string }
+  payload: { orderId?: string; bookingId?: string; checkout?: CheckoutData }
 ) {
-  if (!payload.orderId && !payload.bookingId) {
-    throw new BadRequestError('Provide orderId or bookingId');
+  if (!payload.orderId && !payload.bookingId && !payload.checkout) {
+    throw new BadRequestError('Provide orderId, bookingId, or checkout data');
   }
 
-  const amount = await resolvePayableAmount(payload.orderId, payload.bookingId);
+  let amount: number;
+  if (payload.checkout) {
+    amount = await resolveCheckoutTotal(payload.checkout);
+  } else {
+    amount = await resolvePayableAmount(payload.orderId, payload.bookingId);
+  }
 
   const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(userId);
   if (!authUser.user?.email) throw new BadRequestError('User email not found');
@@ -103,10 +113,12 @@ export async function initializePayment(
     amount: Math.round(amount * 100),
     currency: 'KES',
     callback_url: `${env.APP_URL}/api/v1/payments/paystack/callback`,
+    channels: ['mobile_money', 'card'],
     metadata: {
       userId,
       orderId: payload.orderId ?? null,
       bookingId: payload.bookingId ?? null,
+      checkoutData: payload.checkout ?? null,
     },
   });
 
@@ -119,6 +131,7 @@ export async function initializePayment(
     amount,
     currency: 'KES',
     status: 'pending',
+    checkout_data: payload.checkout ?? null,
   });
 
   if (error) logger.error('Failed to record payment transaction', { error: error.message });

@@ -5,11 +5,6 @@ import { ok } from '../utils/response.js';
 import { env } from '../config/env.js';
 import type { AppEnv } from '../types/index.js';
 
-const targetSchema = z.object({
-  orderId: z.string().uuid().optional(),
-  bookingId: z.string().uuid().optional(),
-});
-
 const checkoutSchema = z.object({
   items: z.array(z.object({
     productId: z.string().uuid(),
@@ -26,7 +21,11 @@ const checkoutSchema = z.object({
 // POST /api/v1/payments/paystack/initialize
 export const initialize = async (c: Context<AppEnv>) => {
   const user = c.get('user')!;
-  const body = targetSchema.parse(await c.req.json());
+  const body = z.object({
+    orderId: z.string().uuid().optional(),
+    bookingId: z.string().uuid().optional(),
+    checkout: checkoutSchema.optional(),
+  }).parse(await c.req.json());
   return ok(c, await svc.initializePayment(user.id, body), 201);
 };
 
