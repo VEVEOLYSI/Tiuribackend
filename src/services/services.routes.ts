@@ -10,6 +10,7 @@ router.get('/:slug', ctrl.getBySlug);
 router.get('/:id/slots', ctrl.getSlots);
 router.post('/', requireAuth, requireRole('admin'), ctrl.create);
 router.put('/:id', requireAuth, requireRole('admin'), ctrl.update);
+router.delete('/:id', requireAuth, requireRole('admin'), ctrl.remove);
 router.post('/:id/slots', requireAuth, requireRole('admin', 'staff'), ctrl.addSlot);
 
 export default router;

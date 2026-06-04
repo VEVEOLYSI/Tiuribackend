@@ -49,6 +49,12 @@ export const update = async (c: Context<AppEnv>) => {
   return ok(c, await svc.updateService(id, body));
 };
 
+export const remove = async (c: Context<AppEnv>) => {
+  const { id } = c.req.param();
+  await svc.deleteService(id);
+  return c.body(null, 204);
+};
+
 export const addSlot = async (c: Context<AppEnv>) => {
   const { id } = c.req.param();
   const body = slotSchema.parse(await c.req.json());

@@ -91,6 +91,15 @@ export async function updateService(id: string, payload: Partial<{
   return data;
 }
 
+export async function deleteService(id: string) {
+  const { error } = await supabaseAdmin
+    .from('services')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id)
+    .is('deleted_at', null);
+  if (error) throw new NotFoundError('Service');
+}
+
 export async function createSlot(serviceId: string, payload: {
   staffId?: string; slotDate: string; startTime: string; endTime: string; capacity?: number;
 }) {
