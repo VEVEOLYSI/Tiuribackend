@@ -152,10 +152,15 @@ export async function verifyPayment(reference: string) {
     `/transaction/verify/${encodeURIComponent(reference)}`
   );
 
-  const { orderId, bookingId } = data.metadata ?? {};
+  const { orderId, bookingId, userId, checkoutData } = data.metadata ?? {};
 
   if (data.status === 'success') {
-    const settled = await settlePayment(reference, orderId, bookingId);
+    const settled = await settlePayment(
+      reference,
+      orderId || null,
+      bookingId || null,
+      { checkoutData, userId }
+    );
     return { verified: true, status: 'success', reference, orderId: settled.orderId, bookingId };
   }
 
@@ -536,7 +541,12 @@ export async function handleWebhook(rawBody: string, signature: string) {
     data: {
       reference: string;
       status: string;
-      metadata?: { orderId?: string; bookingId?: string };
+      metadata?: {
+        orderId?: string;
+        bookingId?: string;
+        userId?: string;
+        checkoutData?: CheckoutData;
+      };
     };
   };
 
@@ -544,7 +554,12 @@ export async function handleWebhook(rawBody: string, signature: string) {
 
   if (event.event === 'charge.success') {
     const { reference, metadata } = event.data;
-    await settlePayment(reference, metadata?.orderId, metadata?.bookingId);
+    await settlePayment(
+      reference,
+      metadata?.orderId || null,
+      metadata?.bookingId || null,
+      { checkoutData: metadata?.checkoutData, userId: metadata?.userId }
+    );
   }
 }
 
@@ -640,11 +655,18 @@ async function findPendingRef(orderId?: string, bookingId?: string): Promise<str
 
 // Creates the order from checkout_data when orderId is not yet set, then marks
 // the transaction + order as paid. Returns the resolved orderId.
+// fallback is used when the DB transaction record is missing (e.g. checkout_data
+// column not yet migrated) — we pull checkoutData + userId from Paystack metadata.
 async function settlePayment(
   reference: string,
   orderId?: string | null,
-  bookingId?: string | null
+  bookingId?: string | null,
+  fallback?: { checkoutData?: CheckoutData | null; userId?: string }
 ): Promise<{ orderId?: string }> {
+  // Normalise empty-string ids (Paystack sometimes returns "" for null fields)
+  const normOrderId = orderId || null;
+  const normBookingId = bookingId || null;
+
   // Fetch the transaction to get checkout_data and guard idempotency
   const { data: txn } = await supabaseAdmin
     .from('payment_transactions')
@@ -654,23 +676,29 @@ async function settlePayment(
 
   if (txn?.status === 'success') {
     logger.info('Payment already settled, skipping', { reference });
-    return { orderId: txn.order_id ?? orderId ?? undefined };
+    return { orderId: txn.order_id ?? normOrderId ?? undefined };
   }
 
-  // Prefer values already stored in the transaction record
-  let finalOrderId: string | null = orderId ?? txn?.order_id ?? null;
-  const finalBookingId = bookingId ?? txn?.booking_id ?? null;
+  // Prefer values stored in the transaction record; fallback to caller params
+  let finalOrderId: string | null = normOrderId ?? txn?.order_id ?? null;
+  const finalBookingId = normBookingId ?? txn?.booking_id ?? null;
 
-  // If checkout_data present and no order exists yet → create it now
-  const checkoutData = txn?.checkout_data as CheckoutData | null;
-  if (checkoutData && !finalOrderId && txn?.user_id) {
+  // Checkout data: DB record first, then Paystack metadata fallback
+  const checkoutData = (txn?.checkout_data ?? fallback?.checkoutData) as CheckoutData | null;
+  const userId = txn?.user_id ?? fallback?.userId;
+
+  // If we have checkout data but no order yet → create the order now
+  if (checkoutData && !finalOrderId && userId) {
     try {
-      const order = await ordersService.createOrder(txn.user_id, checkoutData);
+      const order = await ordersService.createOrder(userId, checkoutData);
       finalOrderId = order.id;
-      await supabaseAdmin
-        .from('payment_transactions')
-        .update({ order_id: finalOrderId })
-        .eq('gateway_ref', reference);
+      if (txn) {
+        await supabaseAdmin
+          .from('payment_transactions')
+          .update({ order_id: finalOrderId })
+          .eq('gateway_ref', reference);
+      }
+      logger.info('Order created from checkout_data', { reference, orderId: finalOrderId });
     } catch (err) {
       logger.error('Failed to create order from checkout_data during settlement', { reference, err });
     }
