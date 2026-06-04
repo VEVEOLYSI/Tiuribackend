@@ -23,7 +23,7 @@ const schema = z.object({
 
   APP_URL: z.string().default('http://localhost:3000'),
   FRONTEND_URL: z.string().default('http://localhost:5173'),
-  CORS_ORIGINS: z.string().default('http://localhost:5173'),
+  CORS_ORIGINS: z.string().default('http://localhost:3001,http://localhost:3002,http://localhost:5173'),
 
   PAYSTACK_PUBLIC_KEY: z.string().min(1),
   PAYSTACK_SECRET_KEY: z.string().min(1),
