@@ -224,7 +224,7 @@ export async function chargeCard(
   };
 
   if (!existingRef) {
-    await supabaseAdmin.from('payment_transactions').insert({
+    const { error: insertErr } = await supabaseAdmin.from('payment_transactions').insert({
       user_id: userId,
       order_id: payload.orderId ?? null,
       booking_id: payload.bookingId ?? null,
@@ -235,6 +235,7 @@ export async function chargeCard(
       status: 'pending',
       checkout_data: payload.checkout ?? null,
     });
+    if (insertErr) logger.warn('Card transaction insert warning', { error: insertErr.message });
   }
 
   if (!result.status) {
@@ -299,7 +300,7 @@ export async function chargeMpesa(
     .replace(/\s/g, '');
 
   // Record transaction before calling Paystack
-  await supabaseAdmin.from('payment_transactions').insert({
+  const { error: insertErr } = await supabaseAdmin.from('payment_transactions').insert({
     user_id: userId,
     order_id: payload.orderId ?? null,
     booking_id: payload.bookingId ?? null,
@@ -310,6 +311,17 @@ export async function chargeMpesa(
     status: 'pending',
     checkout_data: payload.checkout ?? null,
   });
+
+  if (insertErr) {
+    logger.error('Failed to record M-Pesa transaction', { error: insertErr.message });
+    if (insertErr.message.includes('checkout_data')) {
+      throw new BadRequestError(
+        'Database migration required: run sql/add_checkout_data_column.sql in Supabase SQL Editor.'
+      );
+    }
+    // Non-fatal column issues — continue but log
+    logger.warn('Transaction insert warning, proceeding anyway', { error: insertErr.message });
+  }
 
   const raw = await fetch(`${PAYSTACK_BASE}/charge`, {
     method: 'POST',
@@ -323,10 +335,13 @@ export async function chargeMpesa(
       reference,
       currency: 'KES',
       mobile_money: { phone, provider: 'mpesa' },
+      // Store checkout_data in metadata so webhook can create the order
+      // even if the DB insert above had issues
       metadata: {
         userId,
         orderId: payload.orderId ?? null,
         bookingId: payload.bookingId ?? null,
+        checkoutData: payload.checkout ?? null,
       },
     }),
   });
@@ -337,12 +352,23 @@ export async function chargeMpesa(
     data: { status: ChargeStatus; reference: string; display_text?: string };
   };
 
+  logger.info('Paystack M-Pesa raw response', { status: result.status, message: result.message });
+
   if (!result.status) {
     await supabaseAdmin
       .from('payment_transactions')
       .update({ status: 'failed', failure_reason: result.message })
       .eq('gateway_ref', reference);
-    throw new BadRequestError(result.message ?? 'M-Pesa charge failed');
+
+    // Surface a helpful message for common Paystack configuration errors
+    const msg = result.message ?? 'M-Pesa charge failed';
+    const isConfigError =
+      /not enabled|not supported|channel|mobile.?money|provider/i.test(msg);
+    throw new BadRequestError(
+      isConfigError
+        ? `M-Pesa is not enabled on this Paystack account. Go to Paystack Dashboard → Settings → Payment Channels → enable Mobile Money (M-Pesa). Original error: ${msg}`
+        : `M-Pesa payment failed: ${msg}`
+    );
   }
 
   const d = result.data;
