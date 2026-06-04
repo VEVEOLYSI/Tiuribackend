@@ -14,9 +14,13 @@ router.post('/paystack/webhook', ctrl.webhook);
 router.post('/paystack/initialize', requireAuth, ctrl.initialize);
 router.get('/paystack/verify/:reference', requireAuth, ctrl.verify);
 
-// ─── Custom UI / Charge API flow ──────────────────────────────────────────────
+// ─── Card charge flow ─────────────────────────────────────────────────────────
 router.post('/paystack/charge', requireAuth, ctrl.charge);
 router.post('/paystack/submit-pin', requireAuth, ctrl.submitPin);
 router.post('/paystack/submit-otp', requireAuth, ctrl.submitOtp);
+
+// ─── M-Pesa flow ──────────────────────────────────────────────────────────────
+router.post('/paystack/mpesa', requireAuth, ctrl.mpesaCharge);
+router.get('/paystack/mpesa/status/:reference', requireAuth, ctrl.mpesaStatus);
 
 export default router;

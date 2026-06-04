@@ -10,6 +10,19 @@ const targetSchema = z.object({
   bookingId: z.string().uuid().optional(),
 });
 
+const checkoutSchema = z.object({
+  items: z.array(z.object({
+    productId: z.string().uuid(),
+    variantId: z.string().uuid().optional(),
+    quantity: z.number().int().min(1).max(100),
+  })).min(1),
+  addressId: z.string().uuid().optional(),
+  discountCode: z.string().max(50).optional(),
+  shippingAmount: z.number().nonnegative().optional(),
+  notes: z.string().max(500).optional(),
+  idempotencyKey: z.string().uuid().optional(),
+});
+
 // POST /api/v1/payments/paystack/initialize
 export const initialize = async (c: Context<AppEnv>) => {
   const user = c.get('user')!;
@@ -51,7 +64,7 @@ export const publicKey = async (c: Context<AppEnv>) => {
   return ok(c, { publicKey: env.PAYSTACK_PUBLIC_KEY });
 };
 
-// ─── Custom UI (Charge API) ───────────────────────────────────────────────────
+// ─── Card charge ──────────────────────────────────────────────────────────────
 
 const cardSchema = z.object({
   number: z.string().min(15).max(19),
@@ -61,7 +74,6 @@ const cardSchema = z.object({
 });
 
 // POST /api/v1/payments/paystack/charge
-// Charge card directly — returns status + reference (may need PIN/OTP next)
 export const charge = async (c: Context<AppEnv>) => {
   const user = c.get('user')!;
   const body = z
@@ -70,6 +82,7 @@ export const charge = async (c: Context<AppEnv>) => {
       pin: z.string().min(4).max(6).optional(),
       orderId: z.string().uuid().optional(),
       bookingId: z.string().uuid().optional(),
+      checkout: checkoutSchema.optional(),
     })
     .parse(await c.req.json());
 
@@ -90,4 +103,27 @@ export const submitOtp = async (c: Context<AppEnv>) => {
     .object({ reference: z.string().min(1), otp: z.string().min(4).max(8) })
     .parse(await c.req.json());
   return ok(c, await svc.submitOtp(reference, otp));
+};
+
+// ─── M-Pesa ───────────────────────────────────────────────────────────────────
+
+// POST /api/v1/payments/paystack/mpesa
+export const mpesaCharge = async (c: Context<AppEnv>) => {
+  const user = c.get('user')!;
+  const body = z
+    .object({
+      phone: z.string().min(9).max(15),
+      orderId: z.string().uuid().optional(),
+      bookingId: z.string().uuid().optional(),
+      checkout: checkoutSchema.optional(),
+    })
+    .parse(await c.req.json());
+
+  return ok(c, await svc.chargeMpesa(user.id, body), 201);
+};
+
+// GET /api/v1/payments/paystack/mpesa/status/:reference
+export const mpesaStatus = async (c: Context<AppEnv>) => {
+  const { reference } = c.req.param();
+  return ok(c, await svc.checkMpesaStatus(reference));
 };
