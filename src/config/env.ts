@@ -21,9 +21,15 @@ const schema = z.object({
   EMAIL_FROM: z.string().email().default('noreply@tiuri.co.ke'),
   EMAIL_FROM_NAME: z.string().default('Tiuri Nails & Wigs Parlour'),
 
-  APP_URL: z.string().default('http://localhost:3000'),
-  FRONTEND_URL: z.string().default('http://localhost:5173'),
-  CORS_ORIGINS: z.string().default('http://localhost:3001,http://localhost:3002,http://localhost:5173'),
+  // Render sets RENDER_EXTERNAL_URL automatically — use it as default so the
+  // Paystack callback_url is correct in production without any manual config.
+  APP_URL: z.string().default(
+    process.env.RENDER_EXTERNAL_URL ?? 'http://localhost:3000'
+  ),
+  FRONTEND_URL: z.string().default('https://sparkling-pony-3bfa42.netlify.app'),
+  CORS_ORIGINS: z.string().default(
+    'https://sparkling-pony-3bfa42.netlify.app,http://localhost:3001,http://localhost:3002,http://localhost:5173'
+  ),
 
   PAYSTACK_PUBLIC_KEY: z.string().min(1),
   PAYSTACK_SECRET_KEY: z.string().min(1),
