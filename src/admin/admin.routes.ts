@@ -7,9 +7,12 @@ const router = new Hono<AppEnv>();
 
 router.use('*', requireAuth, requireRole('admin'));
 
-router.get('/users', ctrl.listUsers);
+router.get('/stats',          ctrl.getStats);
+router.get('/stats/staff',    ctrl.getStaffStats);
+router.post('/staff/invite',  ctrl.inviteStaff);
+router.get('/users',          ctrl.listUsers);
 router.put('/users/:id/role', ctrl.updateRole);
-router.put('/users/:id/ban', ctrl.toggleBan);
+router.put('/users/:id/ban',  ctrl.toggleBan);
 
 router.get('/orders', ctrl.listOrders);
 router.put('/orders/:id/status', ctrl.updateOrderStatus);

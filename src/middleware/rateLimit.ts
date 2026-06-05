@@ -18,6 +18,16 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// Stricter limiter for login: 5 attempts per minute per IP
+export function authRateLimit() {
+  return rateLimit(5, 60_000);
+}
+
+// Very strict limiter for password reset / resend-verification: 3 per 15 minutes
+export function sensitiveRateLimit() {
+  return rateLimit(3, 15 * 60_000);
+}
+
 export function rateLimit(max = env.RATE_LIMIT_MAX, windowMs = env.RATE_LIMIT_WINDOW_MS) {
   return createMiddleware<AppEnv>(async (c, next) => {
     const ip =

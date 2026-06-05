@@ -6,6 +6,25 @@ import type { AppEnv, OrderStatus, BookingStatus, UserRole } from '../types/inde
 
 const ip = (c: Context<AppEnv>) => c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
 
+// Stats
+export const getStats = async (c: Context<AppEnv>) =>
+  ok(c, await svc.getAdminStats());
+
+export const getStaffStats = async (c: Context<AppEnv>) =>
+  ok(c, await svc.getStaffStats());
+
+// Staff invite
+export const inviteStaff = async (c: Context<AppEnv>) => {
+  const actor = c.get('user')!;
+  const body = z.object({
+    email:    z.string().email(),
+    name:     z.string().min(1).max(100),
+    role:     z.enum(['staff', 'admin']).optional(),
+    branchId: z.string().uuid().optional(),
+  }).parse(await c.req.json());
+  return ok(c, await svc.inviteStaff(actor.id, body), 201);
+};
+
 // Users
 export const listUsers = async (c: Context<AppEnv>) => {
   const result = await svc.listUsers(c.req.query());

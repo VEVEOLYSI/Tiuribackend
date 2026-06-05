@@ -47,13 +47,15 @@ export async function createBooking(
     slotId?: string;
     scheduledDate: string;
     scheduledTime: string;
+    staffId?: string;
     notes?: string;
+    branchId?: string;
     ip?: string;
   }
 ) {
   const { data: service } = await supabaseAdmin
     .from('services')
-    .select('id, name, price, is_active')
+    .select('id, name, price, is_active, deposit_percent')
     .eq('id', payload.serviceId)
     .eq('is_active', true)
     .single();
@@ -78,22 +80,31 @@ export async function createBooking(
       .eq('id', payload.slotId);
   }
 
+  const price = Number(service.price);
+  const depositPct = Number(service.deposit_percent ?? 0);
+  const depositAmount = depositPct > 0 ? Math.round((price * depositPct / 100) * 100) / 100 : 0;
+  const balanceAmount = Math.round((price - depositAmount) * 100) / 100;
+
   const bookingNumber = (await supabaseAdmin.rpc('generate_booking_number')).data as string;
 
   const { data: booking, error } = await supabaseAdmin
     .from('service_bookings')
     .insert({
-      booking_number: bookingNumber,
-      user_id: userId,
-      service_id: payload.serviceId,
-      slot_id: payload.slotId ?? null,
-      scheduled_date: payload.scheduledDate,
-      scheduled_time: payload.scheduledTime,
-      price: service.price,
-      notes: payload.notes,
-      ip_address: payload.ip,
+      booking_number:  bookingNumber,
+      user_id:         userId,
+      service_id:      payload.serviceId,
+      slot_id:         payload.slotId ?? null,
+      staff_id:        payload.staffId ?? null,
+      branch_id:       payload.branchId ?? null,
+      scheduled_date:  payload.scheduledDate,
+      scheduled_time:  payload.scheduledTime,
+      price,
+      deposit_amount:  depositAmount,
+      balance_amount:  balanceAmount,
+      notes:           payload.notes,
+      ip_address:      payload.ip,
     })
-    .select('id, booking_number')
+    .select('id, booking_number, deposit_amount, balance_amount')
     .single();
 
   if (error || !booking) throw new BadRequestError(error?.message ?? 'Booking creation failed');
@@ -116,6 +127,66 @@ export async function createBooking(
   }
 
   return booking;
+}
+
+export async function createWalkinBooking(
+  actorId: string,
+  payload: {
+    clientId: string;
+    serviceId: string;
+    scheduledDate: string;
+    scheduledTime: string;
+    staffId?: string;
+    branchId?: string;
+    notes?: string;
+  }
+) {
+  const { data: service } = await supabaseAdmin
+    .from('services')
+    .select('id, name, price, is_active, deposit_percent')
+    .eq('id', payload.serviceId)
+    .eq('is_active', true)
+    .single();
+
+  if (!service) throw new NotFoundError('Service');
+
+  const price = Number(service.price);
+  const bookingNumber = (await supabaseAdmin.rpc('generate_booking_number')).data as string;
+
+  const { data: booking, error } = await supabaseAdmin
+    .from('service_bookings')
+    .insert({
+      booking_number:  bookingNumber,
+      user_id:         payload.clientId,
+      service_id:      payload.serviceId,
+      staff_id:        payload.staffId ?? actorId,
+      branch_id:       payload.branchId ?? null,
+      scheduled_date:  payload.scheduledDate,
+      scheduled_time:  payload.scheduledTime,
+      price,
+      deposit_amount:  0,
+      balance_amount:  price,
+      notes:           payload.notes ?? null,
+      is_walkin:       true,
+      status:          'confirmed',
+    })
+    .select('id, booking_number, status, is_walkin')
+    .single();
+
+  if (error || !booking) throw new BadRequestError(error?.message ?? 'Walk-in booking failed');
+  bookingsCreatedTotal.inc();
+  return booking;
+}
+
+export async function assignStaff(actorId: string, bookingId: string, staffId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('service_bookings')
+    .update({ staff_id: staffId })
+    .eq('id', bookingId)
+    .select('id, booking_number, staff_id, status')
+    .single();
+  if (error || !data) throw new NotFoundError('Booking');
+  return data;
 }
 
 export async function cancelBooking(userId: string, bookingId: string, reason?: string) {

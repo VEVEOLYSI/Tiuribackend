@@ -575,7 +575,9 @@ async function resolvePayableAmount(orderId?: string, bookingId?: string): Promi
 
     if (!data) throw new NotFoundError('Order');
     if (data.payment_status === 'paid') throw new BadRequestError('Order already paid');
-    return Number(data.total_amount);
+    const amount = Number(data.total_amount);
+    if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestError('Invalid order amount');
+    return amount;
   }
 
   if (bookingId) {
@@ -587,13 +589,18 @@ async function resolvePayableAmount(orderId?: string, bookingId?: string): Promi
 
     if (!data) throw new NotFoundError('Booking');
     if (data.status === 'confirmed') throw new BadRequestError('Booking already paid');
-    return Number(data.price);
+    const amount = Number(data.price);
+    if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestError('Invalid booking price');
+    return amount;
   }
 
   throw new BadRequestError('Provide orderId or bookingId');
 }
 
 async function resolveCheckoutTotal(checkout: CheckoutData): Promise<number> {
+  // Supabase returns NUMERIC columns as strings in some configurations.
+  // Explicit Number() casts throughout prevent string concatenation bugs
+  // where e.g. "2" + "0" = "20" instead of 2 + 0 = 2.
   let subtotal = 0;
 
   for (const item of checkout.items) {
@@ -607,13 +614,14 @@ async function resolveCheckoutTotal(checkout: CheckoutData): Promise<number> {
 
     if (!product) throw new BadRequestError(`Product ${item.productId} not found or unavailable`);
 
-    let unitPrice: number = product.price;
+    let unitPrice = Number(product.price);           // always a numeric value
     if (item.variantId) {
       const variant = (product.variants as Array<{ id: string; price_modifier?: number }>)
         .find((v) => v.id === item.variantId);
-      if (variant?.price_modifier) unitPrice += variant.price_modifier;
+      const modifier = Number(variant?.price_modifier ?? 0);
+      if (modifier !== 0) unitPrice += modifier;     // skip string-truthy "0" values
     }
-    subtotal += unitPrice * item.quantity;
+    subtotal += unitPrice * Number(item.quantity);   // guard quantity too
   }
 
   let discountAmount = 0;
@@ -626,13 +634,16 @@ async function resolveCheckoutTotal(checkout: CheckoutData): Promise<number> {
       .single();
 
     if (dc) {
+      const dcValue = Number(dc.value);
+      const cap    = dc.max_discount_cap != null ? Number(dc.max_discount_cap) : Infinity;
       discountAmount = dc.type === 'percent'
-        ? Math.min(subtotal * (dc.value / 100), dc.max_discount_cap ?? Infinity)
-        : dc.value;
+        ? Math.min(subtotal * (dcValue / 100), cap)
+        : dcValue;
     }
   }
 
-  return Math.max(0, subtotal - discountAmount + (checkout.shippingAmount ?? 0));
+  const shipping = Number(checkout.shippingAmount ?? 0);
+  return Math.max(0, subtotal - discountAmount + shipping);
 }
 
 async function findPendingRef(orderId?: string, bookingId?: string): Promise<string | null> {

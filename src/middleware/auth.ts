@@ -19,6 +19,11 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
     throw new UnauthorizedError('Invalid or expired token');
   }
 
+  // Enforce email verification — accounts must confirm before accessing the API
+  if (!user.email_confirmed_at) {
+    throw new UnauthorizedError('Email not verified. Please check your inbox and click the verification link.');
+  }
+
   const { data: profile, error: profileErr } = await supabaseAdmin
     .from('profiles')
     .select('role, is_active, locked_until, deleted_at')
@@ -29,7 +34,7 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   if (profile.deleted_at) throw new UnauthorizedError('Account deleted');
   if (!profile.is_active) throw new ForbiddenError('Account suspended');
   if (profile.locked_until && new Date(profile.locked_until) > new Date()) {
-    throw new ForbiddenError('Account temporarily locked');
+    throw new ForbiddenError('Account temporarily locked due to repeated failed login attempts');
   }
 
   c.set('user', { id: user.id, email: user.email!, role: profile.role as UserRole });

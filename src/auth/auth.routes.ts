@@ -1,16 +1,21 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../middleware/auth.js';
+import { authRateLimit, sensitiveRateLimit } from '../middleware/rateLimit.js';
 import * as ctrl from './auth.controller.js';
 import type { AppEnv } from '../types/index.js';
 
 const router = new Hono<AppEnv>();
 
-router.post('/register', ctrl.register);
-router.post('/login', ctrl.login);
-router.post('/logout', requireAuth, ctrl.logout);
-router.post('/refresh', ctrl.refresh);
-router.post('/forgot-password', ctrl.forgotPassword);
-router.post('/reset-password', requireAuth, ctrl.resetPassword);
-router.get('/me', requireAuth, ctrl.getMe);
+// Unauthenticated routes — each has its own rate limit tier
+router.post('/register',             sensitiveRateLimit(), ctrl.register);
+router.post('/login',                authRateLimit(),      ctrl.login);
+router.post('/refresh',              authRateLimit(),      ctrl.refresh);
+router.post('/forgot-password',      sensitiveRateLimit(), ctrl.forgotPassword);
+router.post('/resend-verification',  sensitiveRateLimit(), ctrl.resendVerification);
+
+// Authenticated routes
+router.post('/logout',               requireAuth, ctrl.logout);
+router.post('/reset-password',       requireAuth, ctrl.resetPassword);
+router.get('/me',                    requireAuth, ctrl.getMe);
 
 export default router;

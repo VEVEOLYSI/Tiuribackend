@@ -26,3 +26,24 @@ export const bookings = async (c: Context<AppEnv>) => {
 };
 
 export const inventory = async (c: Context<AppEnv>) => ok(c, await svc.getInventoryAlerts());
+
+// ─── ERP analytics ────────────────────────────────────────────────────────────
+
+export const staffPerformance = async (c: Context<AppEnv>) => {
+  const { staffId } = c.req.query() as { staffId?: string };
+  return ok(c, await svc.getStaffPerformance({ staffId }));
+};
+
+export const plReport = async (c: Context<AppEnv>) => {
+  const period = z.enum(['1m', '3m', '6m', '1y']).default('3m').parse(c.req.query('period'));
+  return ok(c, await svc.getPLReport(period));
+};
+
+export const salonInventory = async (c: Context<AppEnv>) => ok(c, await svc.getSalonInventoryAlerts());
+
+export const commissions = async (c: Context<AppEnv>) => {
+  const period = z.enum(['7d', '30d', '90d']).default('30d').parse(c.req.query('period'));
+  return ok(c, await svc.getCommissionSummary(period));
+};
+
+export const dashboard = async (c: Context<AppEnv>) => ok(c, await svc.getDashboardSummary());

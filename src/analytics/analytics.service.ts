@@ -124,3 +124,121 @@ export async function getInventoryAlerts() {
 
   return { lowStock, outOfStock };
 }
+
+// ─── ERP Analytics ────────────────────────────────────────────────────────────
+
+export async function getStaffPerformance(query: { staffId?: string } = {}) {
+  let q = supabaseAdmin.from('staff_performance').select('*');
+  if (query.staffId) q = q.eq('staff_id', query.staffId);
+  const { data } = await q;
+  return data ?? [];
+}
+
+export async function getPLReport(period: '1m' | '3m' | '6m' | '1y' = '3m') {
+  const months = { '1m': 1, '3m': 3, '6m': 6, '1y': 12 }[period];
+  const since = new Date();
+  since.setMonth(since.getMonth() - months);
+  const sinceStr = since.toISOString().split('T')[0];
+
+  const { data: pl } = await supabaseAdmin
+    .from('pl_monthly')
+    .select('month, total_revenue, total_expenses, net_profit')
+    .gte('month', sinceStr)
+    .order('month');
+
+  const rows = pl ?? [];
+  const totalRevenue  = rows.reduce((acc, r) => acc + Number(r.total_revenue ?? 0), 0);
+  const totalExpenses = rows.reduce((acc, r) => acc + Number(r.total_expenses ?? 0), 0);
+  const netProfit     = totalRevenue - totalExpenses;
+
+  return { period, totalRevenue, totalExpenses, netProfit, monthly: rows };
+}
+
+export async function getSalonInventoryAlerts() {
+  const { data } = await supabaseAdmin
+    .from('inventory_items')
+    .select('id, name, unit, stock_quantity, low_stock_threshold, inventory_categories(name)')
+    .eq('is_active', true);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const items = (data ?? []) as any[];
+
+  const lowStock   = items.filter((i) => Number(i.stock_quantity) > 0 && Number(i.stock_quantity) <= Number(i.low_stock_threshold));
+  const outOfStock = items.filter((i) => Number(i.stock_quantity) <= 0);
+
+  return { lowStock, outOfStock };
+}
+
+export async function getCommissionSummary(period: '7d' | '30d' | '90d' = '30d') {
+  const days = { '7d': 7, '30d': 30, '90d': 90 }[period];
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data } = await supabaseAdmin
+    .from('commission_earnings')
+    .select('staff_id, status, commission_amount, profiles!staff_id(name)')
+    .gte('created_at', since);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = (data ?? []) as any[];
+  const byStaff = new Map<string, { staffId: string; name: string; pending: number; paid: number }>();
+  for (const row of rows) {
+    const staffId: string = row.staff_id;
+    const profArr: { name: string }[] | null = row.profiles;
+    const profileName: string = (Array.isArray(profArr) ? profArr[0]?.name : null) ?? 'Unknown';
+    const entry = byStaff.get(staffId) ?? { staffId, name: profileName, pending: 0, paid: 0 };
+    if (row.status === 'pending') entry.pending += Number(row.commission_amount);
+    if (row.status === 'paid')    entry.paid    += Number(row.commission_amount);
+    byStaff.set(staffId, entry);
+  }
+
+  return { period, staff: Array.from(byStaff.values()) };
+}
+
+export async function getDashboardSummary() {
+  const today = new Date().toISOString().split('T')[0];
+  const monthStart = today.slice(0, 7) + '-01';
+
+  const [
+    { count: todayBookings },
+    { count: pendingLeaves },
+    { data: lowStockItems },
+    { data: upcomingMaintenance },
+  ] = await Promise.all([
+    supabaseAdmin
+      .from('service_bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('scheduled_date', today)
+      .not('status', 'in', '("cancelled","no_show")'),
+
+    supabaseAdmin
+      .from('staff_leaves')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending'),
+
+    supabaseAdmin
+      .from('inventory_items')
+      .select('id')
+      .eq('is_active', true)
+      .lte('stock_quantity', 5),
+
+    supabaseAdmin
+      .from('assets')
+      .select('id, name, next_service_date')
+      .eq('status', 'active')
+      .not('next_service_date', 'is', null)
+      .lte('next_service_date', new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+      .order('next_service_date'),
+  ]);
+
+  return {
+    today: {
+      bookings: todayBookings ?? 0,
+    },
+    alerts: {
+      pendingLeaves:         pendingLeaves ?? 0,
+      lowStockItems:         (lowStockItems ?? []).length,
+      assetsNeedingService:  (upcomingMaintenance ?? []).length,
+    },
+    upcomingMaintenance: upcomingMaintenance ?? [],
+  };
+}

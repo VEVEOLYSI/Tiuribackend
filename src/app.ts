@@ -29,6 +29,18 @@ import analyticsRouter from './analytics/analytics.routes.js';
 import adminRouter from './admin/admin.routes.js';
 import discountCodesRouter from './discount-codes/discount-codes.routes.js';
 
+// ─── ERP modules ──────────────────────────────────────────────────────────────
+import branchesRouter from './branches/branches.routes.js';
+import clientNotesRouter from './client-notes/client-notes.routes.js';
+import staffRouter from './staff/staff.routes.js';
+import hrRouter from './hr/hr.routes.js';
+import commissionsRouter from './commissions/commissions.routes.js';
+import payrollRouter from './payroll/payroll.routes.js';
+import inventoryRouter from './inventory/inventory.routes.js';
+import suppliersRouter from './suppliers/suppliers.routes.js';
+import expensesRouter from './expenses/expenses.routes.js';
+import assetsRouter from './assets/assets.routes.js';
+
 const app = new Hono<AppEnv>();
 
 // ─── Global middleware ────────────────────────────────────────────────────────
@@ -43,7 +55,30 @@ app.use(
   })
 );
 
-app.use(secureHeaders());
+app.use(
+  secureHeaders({
+    // HSTS: force HTTPS for 1 year, include subdomains
+    strictTransportSecurity: 'max-age=31536000; includeSubDomains; preload',
+    // Prevent clickjacking
+    xFrameOptions: 'DENY',
+    // Prevent MIME sniffing
+    xContentTypeOptions: 'nosniff',
+    // Modern browsers: disable legacy XSS filter (CSP handles it)
+    xXssProtection: '0',
+    // Don't leak referrer to third parties
+    referrerPolicy: 'strict-origin-when-cross-origin',
+    // Cross-origin isolation
+    crossOriginOpenerPolicy: 'same-origin',
+    crossOriginResourcePolicy: 'same-site',
+  })
+);
+
+// Restrict browser feature access
+app.use((c, next) => {
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  return next();
+});
+
 app.use(trimTrailingSlash());
 app.use(requestLogger);
 app.use(metricsMiddleware);
@@ -86,6 +121,18 @@ api.route('/upload', uploadRouter);
 api.route('/analytics', analyticsRouter);
 api.route('/admin', adminRouter);
 api.route('/discount-codes', discountCodesRouter);
+
+// ─── ERP routes ───────────────────────────────────────────────────────────────
+api.route('/branches', branchesRouter);
+api.route('/client-notes', clientNotesRouter);
+api.route('/staff-dashboard', staffRouter);
+api.route('/hr', hrRouter);
+api.route('/commissions', commissionsRouter);
+api.route('/payroll', payrollRouter);
+api.route('/inventory', inventoryRouter);
+api.route('/suppliers', suppliersRouter);
+api.route('/expenses', expensesRouter);
+api.route('/assets', assetsRouter);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 

@@ -51,14 +51,31 @@ export async function sendEmail(payload: EmailPayload): Promise<void> {
 }
 
 export const templates = {
+  verifyEmail: (name: string, link: string) => ({
+    subject: 'Verify your email — Tiuri Nails & Wigs Parlour',
+    html: `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+        <h1 style="color:#1a1a1a">Verify your email address</h1>
+        <p>Hi${name ? ` ${name}` : ''},</p>
+        <p>Thanks for registering with Tiuri Nails &amp; Wigs Parlour.
+           Please verify your email address to activate your account.</p>
+        <a href="${link}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:4px;margin:16px 0">
+          Verify Email
+        </a>
+        <p style="color:#666;font-size:13px">
+          This link expires in 24 hours. If you didn't create an account, you can safely ignore this email.
+        </p>
+      </div>`,
+  }),
+
   welcome: (name: string) => ({
-    subject: 'Welcome to Tiuri Nails & Wigs Parlour!',
+    subject: 'Your account is active — Tiuri Nails & Wigs Parlour',
     html: `
       <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
         <h1 style="color:#1a1a1a">Welcome, ${name}!</h1>
-        <p>Thank you for joining Tiuri Nails &amp; Wigs Parlour. Your account is ready.</p>
-        <a href="${env.APP_URL}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:4px">
-          Start Shopping
+        <p>Your email has been verified and your account is now active.</p>
+        <a href="${env.FRONTEND_URL}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:4px">
+          Go to App
         </a>
       </div>`,
   }),

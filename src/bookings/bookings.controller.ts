@@ -5,12 +5,26 @@ import { ok, paginated } from '../utils/response.js';
 import type { AppEnv } from '../types/index.js';
 
 const createSchema = z.object({
-  serviceId: z.string().uuid(),
-  slotId: z.string().uuid().optional(),
+  serviceId:     z.string().uuid(),
+  slotId:        z.string().uuid().optional(),
   scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   scheduledTime: z.string().regex(/^\d{2}:\d{2}$/),
-  notes: z.string().max(500).optional(),
+  staffId:       z.string().uuid().optional(),
+  branchId:      z.string().uuid().optional(),
+  notes:         z.string().max(500).optional(),
 });
+
+const walkinSchema = z.object({
+  clientId:      z.string().uuid(),
+  serviceId:     z.string().uuid(),
+  scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  scheduledTime: z.string().regex(/^\d{2}:\d{2}$/),
+  staffId:       z.string().uuid().optional(),
+  branchId:      z.string().uuid().optional(),
+  notes:         z.string().max(500).optional(),
+});
+
+const assignSchema = z.object({ staffId: z.string().uuid() });
 
 export const list = async (c: Context<AppEnv>) => {
   const user = c.get('user')!;
@@ -37,4 +51,17 @@ export const cancel = async (c: Context<AppEnv>) => {
   const { id } = c.req.param();
   const body = z.object({ reason: z.string().max(200).optional() }).parse(await c.req.json().catch(() => ({})));
   return ok(c, await svc.cancelBooking(user.id, id, body.reason));
+};
+
+export const createWalkin = async (c: Context<AppEnv>) => {
+  const user = c.get('user')!;
+  const body = walkinSchema.parse(await c.req.json());
+  return ok(c, await svc.createWalkinBooking(user.id, body), 201);
+};
+
+export const assignStaff = async (c: Context<AppEnv>) => {
+  const user = c.get('user')!;
+  const { id } = c.req.param();
+  const { staffId } = assignSchema.parse(await c.req.json());
+  return ok(c, await svc.assignStaff(user.id, id, staffId));
 };
