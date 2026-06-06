@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import * as svc from './blog.service.js';
 import { ok, noContent } from '../utils/response.js';
+import { BadRequestError } from '../utils/errors.js';
 import type { AppEnv } from '../types/index.js';
 
 const createSchema = z.object({
@@ -26,7 +27,9 @@ export const adminList = async (c: Context<AppEnv>) => {
 };
 
 export const getBySlug = async (c: Context<AppEnv>) => {
-  const post = await svc.getPostBySlug(c.req.param('slug'));
+  const slug = c.req.param('slug');
+  if (!slug) throw new BadRequestError('Slug is required');
+  const post = await svc.getPostBySlug(slug);
   return ok(c, post);
 };
 
@@ -34,6 +37,7 @@ export const create = async (c: Context<AppEnv>) => {
   const body = await c.req.json();
   const payload = createSchema.parse(body);
   const user = c.get('user');
+  if (!user) throw new BadRequestError('Unauthorized');
   const post = await svc.createPost({ ...payload, authorId: user.id });
   return ok(c, post, 201);
 };
@@ -41,11 +45,15 @@ export const create = async (c: Context<AppEnv>) => {
 export const update = async (c: Context<AppEnv>) => {
   const body = await c.req.json();
   const payload = updateSchema.parse(body);
-  const post = await svc.updatePost(c.req.param('id'), payload);
+  const id = c.req.param('id');
+  if (!id) throw new BadRequestError('ID is required');
+  const post = await svc.updatePost(id, payload);
   return ok(c, post);
 };
 
 export const remove = async (c: Context<AppEnv>) => {
-  await svc.deletePost(c.req.param('id'));
+  const id = c.req.param('id');
+  if (!id) throw new BadRequestError('ID is required');
+  await svc.deletePost(id);
   return noContent(c);
 };
