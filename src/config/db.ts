@@ -22,7 +22,7 @@ export function createUserClient(accessToken: string) {
 
 // Verify connectivity at startup
 supabaseAdmin
-  .from('profiles')
+  .from('users')
   .select('id', { count: 'exact', head: true })
   .then(({ error }) => {
     if (error) logger.error('Supabase connection failed', { error: error.message });

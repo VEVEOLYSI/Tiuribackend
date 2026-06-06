@@ -28,6 +28,7 @@ import uploadRouter from './upload/upload.routes.js';
 import analyticsRouter from './analytics/analytics.routes.js';
 import adminRouter from './admin/admin.routes.js';
 import discountCodesRouter from './discount-codes/discount-codes.routes.js';
+import blogRouter from './blog/blog.routes.js';
 
 // ─── ERP modules ──────────────────────────────────────────────────────────────
 import branchesRouter from './branches/branches.routes.js';
@@ -121,6 +122,7 @@ api.route('/upload', uploadRouter);
 api.route('/analytics', analyticsRouter);
 api.route('/admin', adminRouter);
 api.route('/discount-codes', discountCodesRouter);
+api.route('/blog', blogRouter);
 
 // ─── ERP routes ───────────────────────────────────────────────────────────────
 api.route('/branches', branchesRouter);
