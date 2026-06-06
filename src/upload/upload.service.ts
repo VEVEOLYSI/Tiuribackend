@@ -4,7 +4,17 @@ import { BadRequestError } from '../utils/errors.js';
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
-export type UploadFolder = 'products' | 'avatars' | 'reviews' | 'categories' | 'promotions';
+export type UploadFolder = 'products' | 'services' | 'avatars' | 'reviews' | 'categories' | 'promotions';
+
+// Max dimensions per folder — keeps uploads appropriately sized before Cloudinary optimization
+const FOLDER_DIMENSIONS: Record<UploadFolder, { width: number; height?: number }> = {
+  products:   { width: 1200 },
+  services:   { width: 900 },   // service cards: portrait, 3/4 ratio
+  avatars:    { width: 256, height: 256 },
+  reviews:    { width: 800 },
+  categories: { width: 600 },
+  promotions: { width: 1200 },
+};
 
 export async function uploadImage(
   file: File,
@@ -18,9 +28,7 @@ export async function uploadImage(
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-
-  const width = folder === 'avatars' ? 256 : 1200;
-  const height = folder === 'avatars' ? 256 : undefined;
+  const { width, height } = FOLDER_DIMENSIONS[folder];
 
   return uploadBuffer(buffer, { folder: `wigsweb/${folder}`, width, height });
 }

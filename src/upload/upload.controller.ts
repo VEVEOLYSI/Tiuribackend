@@ -6,7 +6,7 @@ import { ok } from '../utils/response.js';
 import { BadRequestError } from '../utils/errors.js';
 import type { AppEnv } from '../types/index.js';
 
-const folderSchema = z.enum(['products', 'avatars', 'reviews', 'categories', 'promotions']);
+const folderSchema = z.enum(['products', 'services', 'avatars', 'reviews', 'categories', 'promotions']);
 
 export const upload = async (c: Context<AppEnv>) => {
   const body = await c.req.parseBody();
