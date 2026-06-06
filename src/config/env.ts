@@ -15,7 +15,7 @@ const schema = z.object({
 
   // Brevo SMTP — no IP restriction, works from any server
   SMTP_HOST: z.string().default('smtp-relay.brevo.com'),
-  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_PORT: z.coerce.number().default(465),
   SMTP_USER: z.string().min(1),
   SMTP_PASS: z.string().min(1),
   EMAIL_FROM: z.string().email().default('noreply@tiuri.co.ke'),
