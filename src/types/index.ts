@@ -5,6 +5,7 @@ export type OrderStatus =
   | 'pending'
   | 'paid'
   | 'processing'
+  | 'packed'
   | 'shipped'
   | 'delivered'
   | 'cancelled'

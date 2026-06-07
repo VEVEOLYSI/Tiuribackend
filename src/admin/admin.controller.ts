@@ -55,7 +55,7 @@ export const updateOrderStatus = async (c: Context<AppEnv>) => {
   const actor = c.get('user')!;
   const { id } = c.req.param();
   const { status } = z
-    .object({ status: z.enum(['pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']) })
+    .object({ status: z.enum(['pending', 'paid', 'processing', 'packed', 'shipped', 'delivered', 'cancelled', 'refunded']) })
     .parse(await c.req.json());
   return ok(c, await svc.updateOrderStatus(actor.id, id, status as OrderStatus, ip(c)));
 };
