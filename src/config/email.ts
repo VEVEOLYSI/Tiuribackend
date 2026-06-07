@@ -2,14 +2,12 @@ import nodemailer from 'nodemailer';
 import { env } from './env.js';
 import { logger } from './logger.js';
 
-// secure=true for port 465 (SSL), false for port 587 (STARTTLS)
-// Render blocks 587 outbound — set SMTP_PORT=465 in Render env vars
+// Resend uses port 465 with SSL. SMTP_USER is always "resend"; SMTP_PASS is the API key.
 const transport = nodemailer.createTransport({
   host: env.SMTP_HOST,
   port: env.SMTP_PORT,
-  secure: env.SMTP_PORT === 465,
+  secure: true,
   auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
-  tls: { rejectUnauthorized: false },
 });
 
 // Verify SMTP connection at startup
