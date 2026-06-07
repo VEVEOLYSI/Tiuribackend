@@ -59,9 +59,12 @@ export async function forgotPassword(c: Context<AppEnv>) {
 }
 
 export async function resetPassword(c: Context<AppEnv>) {
-  const body = z.object({ password: passwordSchema }).parse(await c.req.json());
-  const token = c.req.header('Authorization')?.slice(7) ?? '';
-  await authService.resetPassword(token, body.password);
+  const body = z.object({
+    email:    z.string().email(),
+    token:    z.string().min(1),
+    password: passwordSchema,
+  }).parse(await c.req.json());
+  await authService.resetPassword(body.email, body.token, body.password);
   return ok(c, { message: 'Password updated' });
 }
 

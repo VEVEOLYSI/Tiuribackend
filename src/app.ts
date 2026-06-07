@@ -42,6 +42,7 @@ import inventoryRouter from './inventory/inventory.routes.js';
 import suppliersRouter from './suppliers/suppliers.routes.js';
 import expensesRouter from './expenses/expenses.routes.js';
 import assetsRouter from './assets/assets.routes.js';
+import schedulingRouter from './scheduling/scheduling.routes.js';
 
 const app = new Hono<AppEnv>();
 
@@ -137,6 +138,7 @@ api.route('/inventory', inventoryRouter);
 api.route('/suppliers', suppliersRouter);
 api.route('/expenses', expensesRouter);
 api.route('/assets', assetsRouter);
+api.route('/scheduling', schedulingRouter);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 

@@ -13,8 +13,11 @@ const schema = z.object({
   CLOUDINARY_API_KEY: z.string().min(1),
   CLOUDINARY_API_SECRET: z.string().min(1),
 
-  // Resend HTTP API — no SMTP port issues, works from any host
-  RESEND_API_KEY: z.string().min(1),
+  // Resend SMTP — works from any IP, user is always "resend", pass is API key
+  SMTP_HOST: z.string().default('smtp.resend.com'),
+  SMTP_PORT: z.coerce.number().default(465),
+  SMTP_USER: z.string().default('resend'),
+  SMTP_PASS: z.string().min(1),
   EMAIL_FROM: z.string().email().default('noreply@tiuri.co.ke'),
   EMAIL_FROM_NAME: z.string().default('Tiuri Nails & Wigs Parlour'),
 

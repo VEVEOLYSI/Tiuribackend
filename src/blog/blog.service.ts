@@ -4,7 +4,7 @@ import { NotFoundError, BadRequestError } from '../utils/errors.js';
 export async function listPosts(opts: { publishedOnly?: boolean } = {}) {
   let q = supabaseAdmin
     .from('blog_posts')
-    .select('id, title, slug, excerpt, cover_image, is_published, published_at, created_at, author:users(name)')
+    .select('id, title, slug, excerpt, cover_image, is_published, published_at, created_at, author:profiles(name)')
     .is('deleted_at', null)
     .order('created_at', { ascending: false });
 
@@ -17,7 +17,7 @@ export async function listPosts(opts: { publishedOnly?: boolean } = {}) {
 export async function getPostBySlug(slug: string) {
   const { data, error } = await supabaseAdmin
     .from('blog_posts')
-    .select('*, author:users(name, profile_image)')
+    .select('*, author:profiles(name, avatar_url)')
     .eq('slug', slug)
     .eq('is_published', true)
     .is('deleted_at', null)
@@ -29,7 +29,7 @@ export async function getPostBySlug(slug: string) {
 export async function getPostById(id: string) {
   const { data, error } = await supabaseAdmin
     .from('blog_posts')
-    .select('*, author:users(name, profile_image)')
+    .select('*, author:profiles(name, avatar_url)')
     .eq('id', id)
     .is('deleted_at', null)
     .single();

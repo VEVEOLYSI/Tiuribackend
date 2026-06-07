@@ -93,7 +93,10 @@ export const clockIn = async (c: Context<AppEnv>) => {
 
 export const clockOut = async (c: Context<AppEnv>) => {
   const user = c.get('user')!;
-  return ok(c, await svc.clockOut(user.id));
+  const body = z.object({ note: z.string().max(500).optional() }).parse(
+    await c.req.json().catch(() => ({}))
+  );
+  return ok(c, await svc.clockOut(user.id, body.note));
 };
 
 export const listAttendance = async (c: Context<AppEnv>) => {

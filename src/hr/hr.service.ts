@@ -252,8 +252,10 @@ export async function clockIn(staffId: string, branchId?: string, recordedBy?: s
   return data;
 }
 
-export async function clockOut(staffId: string, recordedBy?: string) {
+export async function clockOut(staffId: string, note?: string, recordedBy?: string) {
   const today = new Date().toISOString().split('T')[0];
+  const now   = new Date();
+
   const { data: existing } = await supabaseAdmin
     .from('attendance_records')
     .select('id, clock_in, clock_out')
@@ -262,15 +264,67 @@ export async function clockOut(staffId: string, recordedBy?: string) {
     .maybeSingle();
 
   if (!existing?.clock_in) throw new BadRequestError('Not clocked in today');
-  if (existing.clock_out) throw new ConflictError('Already clocked out today');
+  if (existing.clock_out)   throw new ConflictError('Already clocked out today');
+
+  // Detect early clock-out by comparing against business end time
+  const { data: settings } = await supabaseAdmin
+    .from('business_settings')
+    .select('business_end_time')
+    .limit(1)
+    .maybeSingle();
+
+  const bizEnd = (settings?.business_end_time as string | null) ?? '18:00';
+  const [bh, bm] = bizEnd.split(':').map(Number);
+  const bizEndMs = new Date(now);
+  bizEndMs.setHours(bh, bm, 0, 0);
+  const isEarly = now < bizEndMs;
+
+  if (isEarly && !note) {
+    throw new BadRequestError('Please provide a reason — you are clocking out before business hours end');
+  }
 
   const { data, error } = await supabaseAdmin
     .from('attendance_records')
-    .update({ clock_out: new Date().toISOString(), recorded_by: recordedBy ?? staffId })
+    .update({
+      clock_out:   now.toISOString(),
+      notes:       note ?? null,
+      recorded_by: recordedBy ?? staffId,
+    })
     .eq('id', existing.id)
     .select('*')
     .single();
+
   if (error || !data) throw new BadRequestError('Clock-out failed');
+
+  // Notify all admins when a staff member leaves early
+  if (isEarly) {
+    const { data: staffProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('name')
+      .eq('id', staffId)
+      .single();
+
+    const staffName = (staffProfile as { name: string } | null)?.name ?? 'A staff member';
+    const clockOutTime = now.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' });
+
+    const { data: admins } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('role', 'admin')
+      .eq('is_active', true)
+      .is('deleted_at', null);
+
+    if (admins && admins.length > 0) {
+      const notifications = (admins as { id: string }[]).map((a) => ({
+        user_id: a.id,
+        type:    'system',
+        title:   'Early Clock-Out Alert',
+        body:    `${staffName} clocked out at ${clockOutTime} (before ${bizEnd}). Reason: ${note}`,
+      }));
+      await supabaseAdmin.from('notifications').insert(notifications).throwOnError();
+    }
+  }
+
   return data;
 }
 
@@ -314,6 +368,6 @@ export async function adminClockIn(staffId: string, branchId?: string, actorId?:
   return clockIn(staffId, branchId, actorId);
 }
 
-export async function adminClockOut(staffId: string, actorId?: string) {
-  return clockOut(staffId, actorId);
+export async function adminClockOut(staffId: string, actorId?: string, note?: string) {
+  return clockOut(staffId, note, actorId);
 }

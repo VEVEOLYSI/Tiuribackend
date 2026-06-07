@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from '../config/db.js';
 import { env } from '../config/env.js';
 import { sendEmail, templates } from '../config/email.js';
+import { logger } from '../config/logger.js';
 import { BadRequestError, UnauthorizedError } from '../utils/errors.js';
 
 function anonClient() {
@@ -177,28 +178,67 @@ export async function refreshSession(refreshToken: string) {
 // ─── Forgot / Reset password ──────────────────────────────────────────────────
 
 export async function forgotPassword(email: string) {
-  const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-    type: 'recovery',
-    email,
-    options: { redirectTo: `${env.FRONTEND_URL}/reset-password` },
-  });
+  // Look up user — silently no-op if email not registered (prevents enumeration)
+  const { data: rows, error: rpcErr } = await supabaseAdmin.rpc('get_profile_by_email', { p_email: email });
 
-  if (!error && data.properties?.action_link) {
-    sendEmail({
-      to: [{ email }],
-      ...templates.passwordReset(data.properties.action_link),
-    }).catch(() => {});
+  if (rpcErr) {
+    logger.error('forgotPassword: profile lookup failed', { email, error: rpcErr.message });
+    return;
+  }
+
+  if (!rows?.length) {
+    logger.info('forgotPassword: email not found in system (no-op)', { email });
+    return;
+  }
+
+  const name = (rows[0].name as string | undefined) ?? '';
+  const token = await issueOtp(email);
+  const resetLink =
+    `${env.FRONTEND_URL}/auth/reset-password?email=${encodeURIComponent(email)}&token=${token}`;
+
+  logger.info('forgotPassword: sending reset email', { email });
+
+  try {
+    await sendEmail({
+      to: [{ email, name }],
+      ...templates.passwordReset(resetLink),
+    });
+  } catch (err: unknown) {
+    logger.error('forgotPassword: email send failed', {
+      email,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
-export async function resetPassword(accessToken: string, newPassword: string) {
-  const { data: { user }, error } = await supabaseAdmin.auth.getUser(accessToken);
-  if (error || !user) throw new UnauthorizedError('Invalid token');
+export async function resetPassword(email: string, token: string, newPassword: string) {
+  // Verify the OTP token
+  const { data: row } = await supabaseAdmin
+    .from('email_otps')
+    .select('otp, expires_at')
+    .eq('email', email)
+    .eq('otp', token)
+    .maybeSingle();
 
-  const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+  if (!row) throw new UnauthorizedError('Invalid or expired reset link');
+
+  if (new Date(row.expires_at as string) < new Date()) {
+    await supabaseAdmin.from('email_otps').delete().eq('email', email);
+    throw new UnauthorizedError('Reset link has expired — please request a new one');
+  }
+
+  // Look up the user
+  const { data: rows } = await supabaseAdmin.rpc('get_profile_by_email', { p_email: email });
+  if (!rows?.length) throw new BadRequestError('Account not found');
+
+  const userId = rows[0].id as string;
+  const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
     password: newPassword,
   });
   if (updateErr) throw new BadRequestError(updateErr.message);
+
+  // Consume the token so it can't be reused
+  await supabaseAdmin.from('email_otps').delete().eq('email', email);
 }
 
 // ─── Me ───────────────────────────────────────────────────────────────────────
