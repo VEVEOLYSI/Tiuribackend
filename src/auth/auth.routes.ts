@@ -11,6 +11,7 @@ router.post('/register',             sensitiveRateLimit(), ctrl.register);
 router.post('/login',                authRateLimit(),      ctrl.login);
 router.post('/refresh',              authRateLimit(),      ctrl.refresh);
 router.post('/forgot-password',      sensitiveRateLimit(), ctrl.forgotPassword);
+router.post('/verify-otp',           sensitiveRateLimit(), ctrl.verifyOtp);
 router.post('/resend-verification',  sensitiveRateLimit(), ctrl.resendVerification);
 
 // Authenticated routes

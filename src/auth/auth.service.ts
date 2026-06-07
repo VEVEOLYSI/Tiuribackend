@@ -10,13 +10,30 @@ function anonClient() {
   });
 }
 
+// ─── OTP helpers ──────────────────────────────────────────────────────────────
+
+function makeOtp(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+async function issueOtp(email: string): Promise<string> {
+  const otp = makeOtp();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
+
+  // Remove any previous OTP for this email, then insert a fresh one
+  await supabaseAdmin.from('email_otps').delete().eq('email', email);
+  await supabaseAdmin.from('email_otps').insert({ email, otp, expires_at: expiresAt });
+
+  return otp;
+}
+
 // ─── Register ─────────────────────────────────────────────────────────────────
 
 export async function register(email: string, password: string, name: string) {
   const { data, error } = await supabaseAdmin.auth.admin.createUser({
     email,
     password,
-    email_confirm: false,          // Require email verification before first login
+    email_confirm: false,
     user_metadata: { name },
   });
 
@@ -27,19 +44,11 @@ export async function register(email: string, password: string, name: string) {
     throw new BadRequestError(error.message);
   }
 
-  // Generate and send verification link
-  const { data: linkData } = await supabaseAdmin.auth.admin.generateLink({
-    type: 'magiclink',
-    email,
-    options: { redirectTo: `${env.FRONTEND_URL}/email-verified` },
-  });
-
-  if (linkData?.properties?.action_link) {
-    sendEmail({
-      to: [{ email, name }],
-      ...templates.verifyEmail(name, linkData.properties.action_link),
-    }).catch(() => {});
-  }
+  const otp = await issueOtp(email);
+  sendEmail({
+    to: [{ email, name }],
+    ...templates.otpVerification(name, otp),
+  }).catch(() => {});
 
   return data.user;
 }
@@ -47,26 +56,58 @@ export async function register(email: string, password: string, name: string) {
 // ─── Resend verification ──────────────────────────────────────────────────────
 
 export async function resendVerification(email: string) {
-  // Check if the user exists and is already confirmed — silently no-op if confirmed
   const { data: rows } = await supabaseAdmin.rpc('get_profile_by_email', { p_email: email });
-  if (!rows?.length) return; // Don't reveal whether email exists
+  if (!rows?.length) return; // silently no-op — don't reveal whether email exists
 
   const userId = rows[0].id as string;
   const confirmed = await supabaseAdmin.rpc('is_email_confirmed', { p_user_id: userId });
-  if (confirmed.data === true) return; // Already verified — no resend needed
+  if (confirmed.data === true) return; // already verified
 
-  const { data: linkData } = await supabaseAdmin.auth.admin.generateLink({
-    type: 'magiclink',
-    email,
-    options: { redirectTo: `${env.FRONTEND_URL}/email-verified` },
-  });
+  const name = (rows[0].name as string | undefined) ?? '';
+  const otp = await issueOtp(email);
+  sendEmail({
+    to: [{ email, name }],
+    ...templates.otpVerification(name, otp),
+  }).catch(() => {});
+}
 
-  if (linkData?.properties?.action_link) {
-    sendEmail({
-      to: [{ email }],
-      ...templates.verifyEmail('', linkData.properties.action_link),
-    }).catch(() => {});
+// ─── Verify OTP ───────────────────────────────────────────────────────────────
+
+export async function verifyOtp(email: string, otp: string) {
+  const { data: row, error } = await supabaseAdmin
+    .from('email_otps')
+    .select('otp, expires_at')
+    .eq('email', email)
+    .eq('otp', otp)
+    .maybeSingle();
+
+  if (error || !row) {
+    throw new BadRequestError('Invalid verification code');
   }
+
+  if (new Date(row.expires_at as string) < new Date()) {
+    await supabaseAdmin.from('email_otps').delete().eq('email', email);
+    throw new BadRequestError('Verification code has expired. Please request a new one.');
+  }
+
+  // Confirm the email in Supabase auth
+  const { data: profileRows } = await supabaseAdmin.rpc('get_profile_by_email', { p_email: email });
+  if (!profileRows?.length) throw new BadRequestError('Account not found');
+
+  const userId = profileRows[0].id as string;
+  await supabaseAdmin.auth.admin.updateUserById(userId, { email_confirm: true });
+
+  // Consume OTP
+  await supabaseAdmin.from('email_otps').delete().eq('email', email);
+
+  // Send welcome email
+  const name = (profileRows[0].name as string | undefined) ?? '';
+  sendEmail({
+    to: [{ email, name }],
+    ...templates.welcome(name),
+  }).catch(() => {});
+
+  return { message: 'Email verified. You can now sign in.' };
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
@@ -78,17 +119,14 @@ export async function login(email: string, password: string) {
   if (error) {
     const msg = error.message.toLowerCase();
 
-    // Surface a clear message for unverified accounts
     if (msg.includes('email not confirmed') || msg.includes('not confirmed')) {
-      throw new UnauthorizedError('Please verify your email address before logging in. Check your inbox for a verification link.');
+      throw new UnauthorizedError('EMAIL_NOT_VERIFIED');
     }
 
-    // Track failed login count using the correct per-email lookup
     await incrementFailedLogin(email);
     throw new UnauthorizedError('Invalid email or password');
   }
 
-  // Check account lock (belt-and-suspenders — also enforced in requireAuth)
   const { data: rows } = await supabaseAdmin.rpc('get_profile_by_email', { p_email: email });
   if (rows?.length) {
     const profile = rows[0] as { id: string; failed_login_count: number; locked_until: string | null };
@@ -96,7 +134,6 @@ export async function login(email: string, password: string) {
       throw new UnauthorizedError('Account temporarily locked due to repeated failed login attempts. Try again later.');
     }
 
-    // Reset failed count on successful login
     await supabaseAdmin
       .from('profiles')
       .update({ failed_login_count: 0, locked_until: null, last_login_at: new Date().toISOString() })
@@ -152,7 +189,6 @@ export async function forgotPassword(email: string) {
       ...templates.passwordReset(data.properties.action_link),
     }).catch(() => {});
   }
-  // Always silent — don't reveal whether the email exists
 }
 
 export async function resetPassword(accessToken: string, newPassword: string) {

@@ -27,9 +27,8 @@ const loginSchema = z.object({
 export async function register(c: Context<AppEnv>) {
   const body = registerSchema.parse(await c.req.json());
   await authService.register(body.email, body.password, body.name);
-  // Intentionally do NOT return the userId — reduces information exposure
   return ok(c, {
-    message: 'Account created. Please check your email to verify your address before logging in.',
+    message: 'Account created. A 6-digit verification code has been sent to your email.',
   }, 201);
 }
 
@@ -69,8 +68,17 @@ export async function resetPassword(c: Context<AppEnv>) {
 export async function resendVerification(c: Context<AppEnv>) {
   const { email } = z.object({ email: z.string().email() }).parse(await c.req.json());
   await authService.resendVerification(email);
-  // Always return the same response — don't reveal whether the email exists
-  return ok(c, { message: 'If that email is registered and unverified, a new link has been sent' });
+  return ok(c, { message: 'If that email is registered and unverified, a new code has been sent' });
+}
+
+export async function verifyOtp(c: Context<AppEnv>) {
+  const { email, otp } = z.object({
+    email: z.string().email(),
+    otp:   z.string().length(6).regex(/^\d{6}$/, 'OTP must be 6 digits'),
+  }).parse(await c.req.json());
+
+  const result = await authService.verifyOtp(email, otp);
+  return ok(c, result);
 }
 
 export async function getMe(c: Context<AppEnv>) {
