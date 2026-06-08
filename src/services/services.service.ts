@@ -155,7 +155,7 @@ export async function getServiceSlots(serviceId: string, date?: string) {
   type Interval = { start: number; end: number };
   const staffBusy = new Map<string, Interval[]>();
   for (const bk of existingBookings ?? []) {
-    const b = bk as {
+    const b = bk as unknown as {
       staff_id: string;
       scheduled_time: string;
       services: { duration_minutes: number; buffer_minutes: number } | null;
