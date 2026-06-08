@@ -79,14 +79,31 @@ export async function resendVerification(email: string) {
     userId = otpRow.user_id as string;
     name   = (otpRow.user_name as string) ?? '';
     const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(userId);
-    if (!user || user.email_confirmed_at) return; // already verified or not found
+    if (!user) return;
+    if (user.email_confirmed_at) {
+      // Email already confirmed but profile might be missing (interrupted verification).
+      // Ensure profile exists so the user can sign in normally.
+      await supabaseAdmin.from('profiles').upsert(
+        { id: userId, name, role: 'customer', is_active: true, failed_login_count: 0 },
+        { onConflict: 'id' },
+      );
+      return;
+    }
   } else {
     // Fallback: OTP row missing or has no user_id (e.g. registered before schema migration).
     // Scan auth users to find the account by email.
     const { data: { users } } = await supabaseAdmin.auth.admin.listUsers({ perPage: 10000 });
     const authUser = users.find((u) => u.email === email);
     if (!authUser) return;
-    if (authUser.email_confirmed_at) return;
+    if (authUser.email_confirmed_at) {
+      // Same recovery: ensure profile exists.
+      const recoveryName = (authUser.user_metadata?.name as string) ?? '';
+      await supabaseAdmin.from('profiles').upsert(
+        { id: authUser.id, name: recoveryName, role: 'customer', is_active: true, failed_login_count: 0 },
+        { onConflict: 'id' },
+      );
+      return;
+    }
     userId = authUser.id;
     name   = (authUser.user_metadata?.name as string) ?? '';
   }
@@ -121,36 +138,41 @@ export async function verifyOtp(email: string, otp: string) {
   // 2. Consume OTP
   await supabaseAdmin.from('email_otps').delete().eq('email', email);
 
-  // 3. Auto-login: generate a magic-link token and exchange it for a real session.
-  //    token_hash (not email+token) is the correct form when we hold the hash server-side.
-  const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
-    type: 'magiclink',
-    email,
-  });
-  if (linkErr || !linkData?.properties?.hashed_token) {
-    logger.error('verifyOtp: generateLink failed', { email, error: linkErr?.message });
-    throw new BadRequestError('Verification succeeded but session creation failed. Please sign in manually.');
-  }
-
-  const { data: sessionData, error: sessionErr } = await anonClient().auth.verifyOtp({
-    token_hash: linkData.properties.hashed_token,
-    type: 'magiclink',
-  });
-  if (sessionErr || !sessionData?.session) {
-    logger.error('verifyOtp: session exchange failed', { email, error: sessionErr?.message });
-    throw new BadRequestError('Verification succeeded but session creation failed. Please sign in manually.');
-  }
-
-  // 4. Create profile — only now that the user is verified and authenticated
+  // 3. Create profile immediately — before attempting session so it always exists
   await supabaseAdmin.from('profiles').upsert(
     { id: userId, name, role: 'customer', is_active: true, failed_login_count: 0 },
     { onConflict: 'id' },
   );
 
-  // 5. Welcome email (fire-and-forget)
+  // 4. Welcome email (fire-and-forget)
   sendEmail({ to: [{ email, name }], ...templates.welcome(name) }).catch(() => {});
 
-  return { session: sessionData.session };
+  // 5. Auto-login via magic-link token exchange. If this fails the profile already
+  //    exists so the user can sign in manually — return session: null instead of throwing.
+  try {
+    const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
+      email,
+    });
+    if (linkErr || !linkData?.properties?.hashed_token) {
+      logger.warn('verifyOtp: generateLink failed', { email, error: linkErr?.message });
+      return { session: null };
+    }
+
+    const { data: sessionData, error: sessionErr } = await anonClient().auth.verifyOtp({
+      token_hash: linkData.properties.hashed_token,
+      type: 'magiclink',
+    });
+    if (sessionErr || !sessionData?.session) {
+      logger.warn('verifyOtp: session exchange failed', { email, error: sessionErr?.message });
+      return { session: null };
+    }
+
+    return { session: sessionData.session };
+  } catch (err) {
+    logger.warn('verifyOtp: auto-login failed', { email, error: (err as Error).message });
+    return { session: null };
+  }
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
