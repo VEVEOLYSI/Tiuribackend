@@ -23,9 +23,10 @@ async function issueOtp(email: string, userId: string, name: string): Promise<st
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
 
   await supabaseAdmin.from('email_otps').delete().eq('email', email);
-  await supabaseAdmin.from('email_otps').insert({
+  const { error } = await supabaseAdmin.from('email_otps').insert({
     email, otp, expires_at: expiresAt, user_id: userId, user_name: name,
   });
+  if (error) throw new Error(`OTP storage failed: ${error.message}`);
 
   return otp;
 }
