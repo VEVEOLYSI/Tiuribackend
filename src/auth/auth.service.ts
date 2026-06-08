@@ -121,21 +121,23 @@ export async function verifyOtp(email: string, otp: string) {
   // 2. Consume OTP
   await supabaseAdmin.from('email_otps').delete().eq('email', email);
 
-  // 3. Auto-login: generate a magic-link token and exchange it for a real session
+  // 3. Auto-login: generate a magic-link token and exchange it for a real session.
+  //    token_hash (not email+token) is the correct form when we hold the hash server-side.
   const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
     type: 'magiclink',
     email,
   });
   if (linkErr || !linkData?.properties?.hashed_token) {
+    logger.error('verifyOtp: generateLink failed', { email, error: linkErr?.message });
     throw new BadRequestError('Verification succeeded but session creation failed. Please sign in manually.');
   }
 
   const { data: sessionData, error: sessionErr } = await anonClient().auth.verifyOtp({
-    email,
-    token: linkData.properties.hashed_token,
+    token_hash: linkData.properties.hashed_token,
     type: 'magiclink',
   });
   if (sessionErr || !sessionData?.session) {
+    logger.error('verifyOtp: session exchange failed', { email, error: sessionErr?.message });
     throw new BadRequestError('Verification succeeded but session creation failed. Please sign in manually.');
   }
 
