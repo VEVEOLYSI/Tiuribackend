@@ -766,7 +766,8 @@ async function settlePayment(
 
     // Send confirmation email now that deposit is paid
     if (bk) {
-      const serviceName = (bk.services as { name: string } | null)?.name ?? 'Service';
+      const svc = bk.services as { name: string } | { name: string }[] | null;
+      const serviceName = (Array.isArray(svc) ? svc[0]?.name : svc?.name) ?? 'Service';
       const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(bk.user_id as string);
       const { data: profile } = await supabaseAdmin
         .from('profiles').select('name').eq('id', bk.user_id as string).maybeSingle();
