@@ -1,20 +1,16 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { env } from './env.js';
 import { logger } from './logger.js';
 
-// Resend uses port 465 with SSL. SMTP_USER is always "resend"; SMTP_PASS is the API key.
-const transport = nodemailer.createTransport({
-  host: env.SMTP_HOST,
-  port: env.SMTP_PORT,
-  secure: true,
-  auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
-});
+// Resend HTTP API — no SMTP port issues on Render or any cloud host.
+// SMTP_PASS holds the Resend API key (re-used so no extra env var needed).
+const resend = new Resend(env.SMTP_PASS);
 
-// Verify SMTP connection at startup
-transport.verify().then(() => {
-  logger.info('SMTP connected', { host: env.SMTP_HOST, port: env.SMTP_PORT });
+// Verify connectivity at startup (non-fatal)
+resend.domains.list().then(() => {
+  logger.info('Resend (email) connected', { from: env.EMAIL_FROM });
 }).catch((err: Error) => {
-  logger.error('SMTP connection failed', { error: err.message });
+  logger.warn('Resend connectivity check failed — emails may not send', { error: err.message });
 });
 
 export interface EmailPayload {
@@ -26,28 +22,28 @@ export interface EmailPayload {
 }
 
 export async function sendEmail(payload: EmailPayload): Promise<void> {
-  const toAddresses = payload.to
-    .map((r) => (r.name ? `"${r.name}" <${r.email}>` : r.email))
-    .join(', ');
+  const toAddresses = payload.to.map((r) =>
+    r.name ? `${r.name} <${r.email}>` : r.email
+  );
 
-  try {
-    await transport.sendMail({
-      from: `"${env.EMAIL_FROM_NAME}" <${env.EMAIL_FROM}>`,
-      to: toAddresses,
-      subject: payload.subject,
-      html: payload.html,
-      ...(payload.text && { text: payload.text }),
-      ...(payload.replyTo && { replyTo: payload.replyTo }),
-    });
+  const { error } = await resend.emails.send({
+    from: `${env.EMAIL_FROM_NAME} <${env.EMAIL_FROM}>`,
+    to: toAddresses,
+    subject: payload.subject,
+    html: payload.html,
+    ...(payload.text  && { text:    payload.text }),
+    ...(payload.replyTo && { replyTo: payload.replyTo }),
+  });
 
-    logger.info('Email sent', {
-      to: payload.to.map((r) => r.email),
-      subject: payload.subject,
-    });
-  } catch (err) {
-    logger.error('Email send failed', { error: err, subject: payload.subject });
-    throw err;
+  if (error) {
+    logger.error('Email send failed', { error: error.message, subject: payload.subject });
+    throw new Error(error.message);
   }
+
+  logger.info('Email sent', {
+    to: payload.to.map((r) => r.email),
+    subject: payload.subject,
+  });
 }
 
 export const templates = {
