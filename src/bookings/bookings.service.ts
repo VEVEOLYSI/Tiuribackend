@@ -81,8 +81,8 @@ export async function createBooking(
   }
 
   const price = Number(service.price);
-  const depositPct = Number(service.deposit_percent ?? 0);
-  const depositAmount = depositPct > 0 ? Math.round((price * depositPct / 100) * 100) / 100 : 0;
+  const depositPct = Number(service.deposit_percent ?? 0) || 30; // default 30% if not configured
+  const depositAmount = Math.round((price * depositPct / 100) * 100) / 100;
   const balanceAmount = Math.round((price - depositAmount) * 100) / 100;
 
   const bookingNumber = (await supabaseAdmin.rpc('generate_booking_number')).data as string;
@@ -111,20 +111,8 @@ export async function createBooking(
 
   bookingsCreatedTotal.inc();
 
-  const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(userId);
-  const { data: profile } = await supabaseAdmin.from('profiles').select('name').eq('id', userId).single();
-
-  if (authUser.user?.email) {
-    sendEmail({
-      to: [{ email: authUser.user.email, name: profile?.name }],
-      ...templates.bookingConfirmed(
-        bookingNumber,
-        service.name,
-        payload.scheduledDate,
-        payload.scheduledTime
-      ),
-    }).catch(() => {});
-  }
+  // Confirmation email is sent by payments.service.ts after deposit is paid,
+  // not here — booking is still pending at this point.
 
   return booking;
 }
@@ -176,6 +164,30 @@ export async function createWalkinBooking(
   if (error || !booking) throw new BadRequestError(error?.message ?? 'Walk-in booking failed');
   bookingsCreatedTotal.inc();
   return booking;
+}
+
+export async function startBooking(actorId: string, bookingId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('service_bookings')
+    .update({ status: 'in_progress', actual_start_time: new Date().toISOString() })
+    .eq('id', bookingId)
+    .in('status', ['pending', 'confirmed'])
+    .select('id, booking_number, status, actual_start_time')
+    .single();
+  if (error || !data) throw new BadRequestError('Cannot start this booking');
+  return data;
+}
+
+export async function completeBooking(actorId: string, bookingId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('service_bookings')
+    .update({ status: 'completed', actual_end_time: new Date().toISOString() })
+    .eq('id', bookingId)
+    .eq('status', 'in_progress')
+    .select('id, booking_number, status, actual_end_time')
+    .single();
+  if (error || !data) throw new BadRequestError('Booking must be in progress before completing');
+  return data;
 }
 
 export async function assignStaff(actorId: string, bookingId: string, staffId: string) {

@@ -59,6 +59,18 @@ export const createWalkin = async (c: Context<AppEnv>) => {
   return ok(c, await svc.createWalkinBooking(user.id, body), 201);
 };
 
+export const startBooking = async (c: Context<AppEnv>) => {
+  const user = c.get('user')!;
+  const { id } = c.req.param();
+  return ok(c, await svc.startBooking(user.id, id));
+};
+
+export const completeBooking = async (c: Context<AppEnv>) => {
+  const user = c.get('user')!;
+  const { id } = c.req.param();
+  return ok(c, await svc.completeBooking(user.id, id));
+};
+
 export const assignStaff = async (c: Context<AppEnv>) => {
   const user = c.get('user')!;
   const { id } = c.req.param();

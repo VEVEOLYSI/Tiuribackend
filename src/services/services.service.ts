@@ -146,7 +146,7 @@ export async function getServiceSlots(serviceId: string, date?: string) {
   const { data: existingBookings } = activeStaffIds.length
     ? await supabaseAdmin
         .from('service_bookings')
-        .select('staff_id, scheduled_time, services(duration_minutes, buffer_minutes)')
+        .select('staff_id, scheduled_time, actual_end_time, services(duration_minutes, buffer_minutes)')
         .in('staff_id', activeStaffIds)
         .eq('scheduled_date', date)
         .not('status', 'in', '("cancelled","no_show")')
@@ -158,13 +158,22 @@ export async function getServiceSlots(serviceId: string, date?: string) {
     const b = bk as unknown as {
       staff_id: string;
       scheduled_time: string;
+      actual_end_time: string | null;
       services: { duration_minutes: number; buffer_minutes: number } | null;
     };
     if (!b.staff_id) continue;
     const startMin = timeToMinutes(b.scheduled_time);
-    const dur = (b.services?.duration_minutes ?? 60) + (b.services?.buffer_minutes ?? 0);
+    let endMin: number;
+    if (b.actual_end_time) {
+      // Technician already finished — use real end time (may be early or late)
+      const t = new Date(b.actual_end_time);
+      endMin = t.getHours() * 60 + t.getMinutes();
+    } else {
+      const dur = (b.services?.duration_minutes ?? 60) + (b.services?.buffer_minutes ?? 0);
+      endMin = startMin + dur;
+    }
     const arr = staffBusy.get(b.staff_id) ?? [];
-    arr.push({ start: startMin, end: startMin + dur });
+    arr.push({ start: startMin, end: endMin });
     staffBusy.set(b.staff_id, arr);
   }
 

@@ -5,6 +5,7 @@ import { logger } from '../config/logger.js';
 import { paymentsProcessedTotal } from '../config/metrics.js';
 import { BadRequestError, NotFoundError } from '../utils/errors.js';
 import * as ordersService from '../orders/orders.service.js';
+import { sendEmail, templates } from '../config/email.js';
 
 // ─── Paystack API helpers ─────────────────────────────────────────────────────
 
@@ -104,8 +105,14 @@ export async function initializePayment(
 
   const existingRef = await findPendingRef(payload.orderId, payload.bookingId);
   if (existingRef) {
-    logger.info('Reusing pending Paystack transaction', { reference: existingRef });
-    return { authorizationUrl: null, accessCode: null, reference: existingRef, reused: true };
+    // Expire the stale transaction — user reopened the payment dialog without completing.
+    // If they had paid, the webhook would have already marked it 'success'.
+    await supabaseAdmin
+      .from('payment_transactions')
+      .update({ status: 'failed', failure_reason: 'Superseded by new payment attempt' })
+      .eq('gateway_ref', existingRef)
+      .eq('status', 'pending');
+    logger.info('Expired stale pending transaction, creating fresh one', { reference: existingRef });
   }
 
   const initData = await paystackRequest<PaystackInitData>('POST', '/transaction/initialize', {
@@ -311,11 +318,26 @@ export async function chargeMpesa(
 
   const reference = `mpesa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  // Normalise phone: Paystack Kenya expects 07XX... or 01XX... (10 digits)
-  const phone = payload.phone.trim()
-    .replace(/^\+254/, '0')
-    .replace(/^254/, '0')
-    .replace(/\s/g, '');
+  // Normalise to local format 07XXXXXXXX / 01XXXXXXXX first, then convert to
+  // international 254XXXXXXXXX — Paystack's /charge mobile_money requires the
+  // E.164 country-code form without the leading zero.
+  let phone = payload.phone.trim().replace(/[\s\-().+]/g, '');
+  if (phone.startsWith('254') && phone.length === 12) {
+    phone = '0' + phone.slice(3);            // 254712345678 → 0712345678
+  } else if (phone.startsWith('254') && phone.length === 11) {
+    phone = '0' + phone.slice(3);            // 25411234567  → 011234567 (Airtel)
+  } else if (!phone.startsWith('0') && phone.length === 9) {
+    phone = '0' + phone;                     // 712345678    → 0712345678
+  }
+
+  if (!/^0[17]\d{8}$/.test(phone)) {
+    throw new BadRequestError('Invalid phone number. Use format 0712345678 or 0112345678');
+  }
+
+  // Paystack expects +254XXXXXXXXX (E.164 format with +)
+  const paystackPhone = '+254' + phone.slice(1);
+
+  logger.info('M-Pesa charge: normalised phone', { input: payload.phone, local: phone, paystack: paystackPhone });
 
   // Record transaction before calling Paystack
   const { error: insertErr } = await supabaseAdmin.from('payment_transactions').insert({
@@ -352,7 +374,7 @@ export async function chargeMpesa(
       amount: Math.round(amount * 100),
       reference,
       currency: 'KES',
-      mobile_money: { phone, provider: 'mpesa' },
+      mobile_money: { phone: paystackPhone, provider: 'mpesa' },
       // Store checkout_data in metadata so webhook can create the order
       // even if the DB insert above had issues
       metadata: {
@@ -583,14 +605,15 @@ async function resolvePayableAmount(orderId?: string, bookingId?: string): Promi
   if (bookingId) {
     const { data } = await supabaseAdmin
       .from('service_bookings')
-      .select('price, status')
+      .select('price, deposit_amount, status')
       .eq('id', bookingId)
       .single();
 
     if (!data) throw new NotFoundError('Booking');
-    if (data.status === 'confirmed') throw new BadRequestError('Booking already paid');
-    const amount = Number(data.price);
-    if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestError('Invalid booking price');
+    if (data.status === 'confirmed') throw new BadRequestError('Deposit already paid for this booking');
+    const depositAmount = Number(data.deposit_amount ?? 0);
+    const amount = depositAmount > 0 ? depositAmount : Number(data.price);
+    if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestError('Invalid booking amount');
     return amount;
   }
 
@@ -729,10 +752,36 @@ async function settlePayment(
   }
 
   if (finalBookingId) {
+    // Fetch booking details before update so we can send the confirmation email
+    const { data: bk } = await supabaseAdmin
+      .from('service_bookings')
+      .select('booking_number, scheduled_date, scheduled_time, user_id, services(name)')
+      .eq('id', finalBookingId)
+      .maybeSingle();
+
     await supabaseAdmin
       .from('service_bookings')
-      .update({ status: 'confirmed' })
+      .update({ status: 'confirmed', deposit_paid_at: new Date().toISOString() })
       .eq('id', finalBookingId);
+
+    // Send confirmation email now that deposit is paid
+    if (bk) {
+      const serviceName = (bk.services as { name: string } | null)?.name ?? 'Service';
+      const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(bk.user_id as string);
+      const { data: profile } = await supabaseAdmin
+        .from('profiles').select('name').eq('id', bk.user_id as string).maybeSingle();
+      if (authUser.user?.email) {
+        sendEmail({
+          to: [{ email: authUser.user.email, name: profile?.name ?? undefined }],
+          ...templates.bookingConfirmed(
+            bk.booking_number as string,
+            serviceName,
+            bk.scheduled_date as string,
+            bk.scheduled_time as string,
+          ),
+        }).catch(() => {});
+      }
+    }
   }
 
   paymentsProcessedTotal.inc({ gateway: 'paystack', status: 'success' });
