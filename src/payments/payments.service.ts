@@ -755,7 +755,7 @@ async function settlePayment(
     // Fetch booking details before update so we can send the confirmation email
     const { data: bk } = await supabaseAdmin
       .from('service_bookings')
-      .select('booking_number, scheduled_date, scheduled_time, user_id, services(name)')
+      .select('booking_number, scheduled_date, scheduled_time, user_id, price, deposit_amount, balance_amount, services(name)')
       .eq('id', finalBookingId)
       .maybeSingle();
 
@@ -779,6 +779,9 @@ async function settlePayment(
             serviceName,
             bk.scheduled_date as string,
             bk.scheduled_time as string,
+            profile?.name ?? '',
+            Number(bk.deposit_amount ?? 0),
+            Number(bk.balance_amount ?? 0),
           ),
         }).catch(() => {});
       }
