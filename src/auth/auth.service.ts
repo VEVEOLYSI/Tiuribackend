@@ -65,20 +65,33 @@ export async function register(email: string, password: string, name: string) {
 // ─── Resend verification ──────────────────────────────────────────────────────
 
 export async function resendVerification(email: string) {
-  // Look up user from the pending OTP row — no dependency on profiles table
+  let userId: string;
+  let name: string;
+
+  // Fast path: OTP row has user_id (normal case after migration)
   const { data: otpRow } = await supabaseAdmin
     .from('email_otps')
     .select('user_id, user_name')
     .eq('email', email)
     .maybeSingle();
 
-  if (!otpRow?.user_id) return; // no pending verification, silently no-op
+  if (otpRow?.user_id) {
+    userId = otpRow.user_id as string;
+    name   = (otpRow.user_name as string) ?? '';
+    const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (!user || user.email_confirmed_at) return; // already verified or not found
+  } else {
+    // Fallback: OTP row missing or has no user_id (e.g. registered before schema migration).
+    // Scan auth users to find the account by email.
+    const { data: { users } } = await supabaseAdmin.auth.admin.listUsers({ perPage: 10000 });
+    const authUser = users.find((u) => u.email === email);
+    if (!authUser) return;
+    if (authUser.email_confirmed_at) return;
+    userId = authUser.id;
+    name   = (authUser.user_metadata?.name as string) ?? '';
+  }
 
-  const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(otpRow.user_id as string);
-  if (!user || user.email_confirmed_at) return; // already verified or not found
-
-  const name = (otpRow.user_name as string) ?? '';
-  const otp = await issueOtp(email, otpRow.user_id as string, name);
+  const otp = await issueOtp(email, userId, name);
   sendEmail({ to: [{ email, name }], ...templates.otpVerification(name, otp) }).catch(() => {});
 }
 
