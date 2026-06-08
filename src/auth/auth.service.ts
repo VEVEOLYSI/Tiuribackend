@@ -17,13 +17,15 @@ function makeOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-async function issueOtp(email: string): Promise<string> {
+// Stores user_id + name so verifyOtp and resendVerification don't depend on profiles
+async function issueOtp(email: string, userId: string, name: string): Promise<string> {
   const otp = makeOtp();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
 
-  // Remove any previous OTP for this email, then insert a fresh one
   await supabaseAdmin.from('email_otps').delete().eq('email', email);
-  await supabaseAdmin.from('email_otps').insert({ email, otp, expires_at: expiresAt });
+  await supabaseAdmin.from('email_otps').insert({
+    email, otp, expires_at: expiresAt, user_id: userId, user_name: name,
+  });
 
   return otp;
 }
@@ -45,11 +47,16 @@ export async function register(email: string, password: string, name: string) {
     throw new BadRequestError(error.message);
   }
 
-  const otp = await issueOtp(email);
-  sendEmail({
-    to: [{ email, name }],
-    ...templates.otpVerification(name, otp),
-  }).catch(() => {});
+  const otp = await issueOtp(email, data.user.id, name);
+
+  // Await email — if delivery fails, roll back the auth user so the address can be retried
+  try {
+    await sendEmail({ to: [{ email, name }], ...templates.otpVerification(name, otp) });
+  } catch {
+    await supabaseAdmin.auth.admin.deleteUser(data.user.id).catch(() => {});
+    await supabaseAdmin.from('email_otps').delete().eq('email', email).catch(() => {});
+    throw new BadRequestError('Invalid or unreachable email. Please try again.');
+  }
 
   return data.user;
 }
@@ -57,19 +64,21 @@ export async function register(email: string, password: string, name: string) {
 // ─── Resend verification ──────────────────────────────────────────────────────
 
 export async function resendVerification(email: string) {
-  const { data: rows } = await supabaseAdmin.rpc('get_profile_by_email', { p_email: email });
-  if (!rows?.length) return; // silently no-op — don't reveal whether email exists
+  // Look up user from the pending OTP row — no dependency on profiles table
+  const { data: otpRow } = await supabaseAdmin
+    .from('email_otps')
+    .select('user_id, user_name')
+    .eq('email', email)
+    .maybeSingle();
 
-  const userId = rows[0].id as string;
-  const confirmed = await supabaseAdmin.rpc('is_email_confirmed', { p_user_id: userId });
-  if (confirmed.data === true) return; // already verified
+  if (!otpRow?.user_id) return; // no pending verification, silently no-op
 
-  const name = (rows[0].name as string | undefined) ?? '';
-  const otp = await issueOtp(email);
-  sendEmail({
-    to: [{ email, name }],
-    ...templates.otpVerification(name, otp),
-  }).catch(() => {});
+  const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(otpRow.user_id as string);
+  if (!user || user.email_confirmed_at) return; // already verified or not found
+
+  const name = (otpRow.user_name as string) ?? '';
+  const otp = await issueOtp(email, otpRow.user_id as string, name);
+  sendEmail({ to: [{ email, name }], ...templates.otpVerification(name, otp) }).catch(() => {});
 }
 
 // ─── Verify OTP ───────────────────────────────────────────────────────────────
@@ -77,38 +86,55 @@ export async function resendVerification(email: string) {
 export async function verifyOtp(email: string, otp: string) {
   const { data: row, error } = await supabaseAdmin
     .from('email_otps')
-    .select('otp, expires_at')
+    .select('otp, expires_at, user_id, user_name')
     .eq('email', email)
     .eq('otp', otp)
     .maybeSingle();
 
-  if (error || !row) {
-    throw new BadRequestError('Invalid verification code');
-  }
+  if (error || !row) throw new BadRequestError('Invalid verification code');
 
   if (new Date(row.expires_at as string) < new Date()) {
     await supabaseAdmin.from('email_otps').delete().eq('email', email);
     throw new BadRequestError('Verification code has expired. Please request a new one.');
   }
 
-  // Confirm the email in Supabase auth
-  const { data: profileRows } = await supabaseAdmin.rpc('get_profile_by_email', { p_email: email });
-  if (!profileRows?.length) throw new BadRequestError('Account not found');
+  const userId = row.user_id as string;
+  const name  = (row.user_name as string) ?? '';
 
-  const userId = profileRows[0].id as string;
+  // 1. Mark email confirmed
   await supabaseAdmin.auth.admin.updateUserById(userId, { email_confirm: true });
 
-  // Consume OTP
+  // 2. Consume OTP
   await supabaseAdmin.from('email_otps').delete().eq('email', email);
 
-  // Send welcome email
-  const name = (profileRows[0].name as string | undefined) ?? '';
-  sendEmail({
-    to: [{ email, name }],
-    ...templates.welcome(name),
-  }).catch(() => {});
+  // 3. Auto-login: generate a magic-link token and exchange it for a real session
+  const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
+    type: 'magiclink',
+    email,
+  });
+  if (linkErr || !linkData?.properties?.hashed_token) {
+    throw new BadRequestError('Verification succeeded but session creation failed. Please sign in manually.');
+  }
 
-  return { message: 'Email verified. You can now sign in.' };
+  const { data: sessionData, error: sessionErr } = await anonClient().auth.verifyOtp({
+    email,
+    token: linkData.properties.hashed_token,
+    type: 'magiclink',
+  });
+  if (sessionErr || !sessionData?.session) {
+    throw new BadRequestError('Verification succeeded but session creation failed. Please sign in manually.');
+  }
+
+  // 4. Create profile — only now that the user is verified and authenticated
+  await supabaseAdmin.from('profiles').upsert(
+    { id: userId, name, role: 'customer', is_active: true, failed_login_count: 0 },
+    { onConflict: 'id' },
+  );
+
+  // 5. Welcome email (fire-and-forget)
+  sendEmail({ to: [{ email, name }], ...templates.welcome(name) }).catch(() => {});
+
+  return { session: sessionData.session };
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
