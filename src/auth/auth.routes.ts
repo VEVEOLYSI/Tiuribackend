@@ -16,7 +16,7 @@ router.post('/resend-verification',  sensitiveRateLimit(), ctrl.resendVerificati
 
 // Authenticated routes
 router.post('/logout',               requireAuth, ctrl.logout);
-router.post('/reset-password',       requireAuth, ctrl.resetPassword);
+router.post('/reset-password',       sensitiveRateLimit(), ctrl.resetPassword);
 router.get('/me',                    requireAuth, ctrl.getMe);
 
 export default router;
