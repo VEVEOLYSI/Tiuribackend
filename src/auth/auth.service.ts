@@ -54,7 +54,7 @@ export async function register(email: string, password: string, name: string) {
     await sendEmail({ to: [{ email, name }], ...templates.otpVerification(name, otp) });
   } catch {
     await supabaseAdmin.auth.admin.deleteUser(data.user.id).catch(() => {});
-    await supabaseAdmin.from('email_otps').delete().eq('email', email).catch(() => {});
+    try { await supabaseAdmin.from('email_otps').delete().eq('email', email); } catch { /* ignore */ }
     throw new BadRequestError('Invalid or unreachable email. Please try again.');
   }
 
@@ -217,8 +217,9 @@ export async function forgotPassword(email: string) {
     return;
   }
 
-  const name = (rows[0].name as string | undefined) ?? '';
-  const token = await issueOtp(email);
+  const name   = (rows[0].name as string | undefined) ?? '';
+  const userId = rows[0].id as string;
+  const token  = await issueOtp(email, userId, name);
   const resetLink =
     `${env.FRONTEND_URL}/auth/reset-password?email=${encodeURIComponent(email)}&token=${token}`;
 
