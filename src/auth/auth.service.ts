@@ -20,7 +20,7 @@ function makeOtp(): string {
 // Stores user_id + name so verifyOtp and resendVerification don't depend on profiles
 async function issueOtp(email: string, userId: string, name: string): Promise<string> {
   const otp = makeOtp();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min
 
   await supabaseAdmin.from('email_otps').delete().eq('email', email);
   const { error } = await supabaseAdmin.from('email_otps').insert({
