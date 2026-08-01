@@ -4,7 +4,7 @@ import { BadRequestError } from '../utils/errors.js';
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
-export type UploadFolder = 'products' | 'services' | 'avatars' | 'reviews' | 'categories' | 'promotions';
+export type UploadFolder = 'products' | 'services' | 'avatars' | 'reviews' | 'categories' | 'promotions' | 'homepage';
 
 // Max dimensions per folder — keeps uploads appropriately sized before Cloudinary optimization
 const FOLDER_DIMENSIONS: Record<UploadFolder, { width: number; height?: number }> = {
@@ -14,6 +14,7 @@ const FOLDER_DIMENSIONS: Record<UploadFolder, { width: number; height?: number }
   reviews:    { width: 800 },
   categories: { width: 600 },
   promotions: { width: 1200 },
+  homepage:   { width: 1600 }, // hero / philosophy / cta banners
 };
 
 export async function uploadImage(

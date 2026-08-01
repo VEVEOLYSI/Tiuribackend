@@ -30,6 +30,7 @@ import adminRouter from './admin/admin.routes.js';
 import discountCodesRouter from './discount-codes/discount-codes.routes.js';
 import blogRouter from './blog/blog.routes.js';
 import contactRouter from './contact/contact.routes.js';
+import homepageImagesRouter from './homepage-images/homepage-images.routes.js';
 
 // ─── ERP modules ──────────────────────────────────────────────────────────────
 import branchesRouter from './branches/branches.routes.js';
@@ -126,6 +127,7 @@ api.route('/admin', adminRouter);
 api.route('/discount-codes', discountCodesRouter);
 api.route('/blog', blogRouter);
 api.route('/contact', contactRouter);
+api.route('/homepage-images', homepageImagesRouter);
 
 // ─── ERP routes ───────────────────────────────────────────────────────────────
 api.route('/branches', branchesRouter);
