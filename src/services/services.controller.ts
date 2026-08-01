@@ -12,6 +12,8 @@ const serviceSchema = z.object({
   durationMinutes: z.number().int().positive(),
   capacity: z.number().int().positive().default(1),
   images: z.array(z.object({ url: z.string(), alt: z.string().optional() })).default([]),
+  category: z.string().optional(),
+  videoUrl: z.string().url().nullable().optional(),
   isFeatured: z.boolean().default(false),
   metaTitle: z.string().max(200).optional(),
   metaDescription: z.string().max(500).optional(),
@@ -25,7 +27,10 @@ const slotSchema = z.object({
   capacity: z.number().int().positive().default(1),
 });
 
-export const list = async (c: Context<AppEnv>) => ok(c, await svc.listServices());
+export const list = async (c: Context<AppEnv>) => {
+  const category = c.req.query('category');
+  return ok(c, await svc.listServices(category));
+};
 
 export const getBySlug = async (c: Context<AppEnv>) => {
   const { slug } = c.req.param();

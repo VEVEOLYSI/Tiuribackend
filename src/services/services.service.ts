@@ -1,13 +1,18 @@
 import { supabaseAdmin } from '../config/db.js';
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
 
-export async function listServices() {
-  const { data } = await supabaseAdmin
+export async function listServices(category?: string) {
+  let query = supabaseAdmin
     .from('services')
-    .select('id, name, slug, description, price, duration_minutes, capacity, images, is_featured, created_at')
+    .select('id, name, slug, description, price, duration_minutes, capacity, images, is_featured, category, video_url, created_at')
     .eq('is_active', true)
-    .is('deleted_at', null)
-    .order('name');
+    .is('deleted_at', null);
+
+  if (category) {
+    query = query.eq('category', category);
+  }
+
+  const { data } = await query.order('name');
   return data ?? [];
 }
 
@@ -209,6 +214,7 @@ export async function getServiceSlots(serviceId: string, date?: string) {
 export async function createService(payload: {
   name: string; slug: string; description?: string; price: number;
   durationMinutes: number; capacity?: number; images?: unknown[];
+  category?: string; videoUrl?: string | null;
   isFeatured?: boolean; metaTitle?: string; metaDescription?: string;
 }) {
   const { data, error } = await supabaseAdmin
@@ -221,6 +227,8 @@ export async function createService(payload: {
       duration_minutes: payload.durationMinutes,
       capacity: payload.capacity ?? 1,
       images: payload.images ?? [],
+      category: payload.category ?? null,
+      video_url: payload.videoUrl ?? null,
       is_featured: payload.isFeatured ?? false,
       meta_title: payload.metaTitle,
       meta_description: payload.metaDescription,
@@ -234,6 +242,7 @@ export async function createService(payload: {
 export async function updateService(id: string, payload: Partial<{
   name: string; slug: string; description: string; price: number;
   durationMinutes: number; capacity: number; images: unknown[];
+  category: string; videoUrl: string | null;
   isActive: boolean; isFeatured: boolean;
 }>) {
   const updates: Record<string, unknown> = {};
@@ -244,6 +253,8 @@ export async function updateService(id: string, payload: Partial<{
   if (payload.durationMinutes !== undefined) updates.duration_minutes = payload.durationMinutes;
   if (payload.capacity !== undefined) updates.capacity = payload.capacity;
   if (payload.images !== undefined) updates.images = payload.images;
+  if (payload.category !== undefined) updates.category = payload.category;
+  if (payload.videoUrl !== undefined) updates.video_url = payload.videoUrl;
   if (payload.isActive !== undefined) updates.is_active = payload.isActive;
   if (payload.isFeatured !== undefined) updates.is_featured = payload.isFeatured;
 

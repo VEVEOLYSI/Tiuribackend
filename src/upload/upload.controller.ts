@@ -18,3 +18,15 @@ export const upload = async (c: Context<AppEnv>) => {
   const result = await svc.uploadImage(file, folder);
   return ok(c, result, 201);
 };
+
+export const uploadVideo = async (c: Context<AppEnv>) => {
+  const body = await c.req.parseBody();
+  const file = body['file'];
+  const folder = folderSchema.parse(body['folder'] ?? 'services') as UploadFolder;
+
+  if (!(file instanceof File)) throw new BadRequestError('No file provided');
+
+  const result = await svc.uploadVideo(file, folder);
+  return ok(c, result, 201);
+};
+

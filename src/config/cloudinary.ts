@@ -62,3 +62,32 @@ export async function uploadBuffer(
 export async function deleteCloudinaryAsset(publicId: string): Promise<void> {
   await cloudinary.uploader.destroy(publicId);
 }
+
+export async function uploadVideoBuffer(
+  buffer: Buffer,
+  opts: { folder?: string; publicId?: string } = {}
+): Promise<{ url: string; publicId: string; duration?: number }> {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: opts.folder ?? 'wigsweb/videos',
+        public_id: opts.publicId,
+        resource_type: 'video',
+        invalidate: true,
+      },
+      (error, result) => {
+        if (error || !result) {
+          logger.error('Cloudinary video upload failed', { error });
+          reject(error ?? new Error('Cloudinary upload returned no result'));
+          return;
+        }
+        resolve({
+          url: result.secure_url,
+          publicId: result.public_id,
+          duration: result.duration,
+        });
+      }
+    );
+    stream.end(buffer);
+  });
+}
