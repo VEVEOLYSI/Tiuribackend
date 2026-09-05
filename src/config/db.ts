@@ -20,11 +20,46 @@ export function createUserClient(accessToken: string) {
   });
 }
 
-// Verify connectivity at startup
-supabaseAdmin
-  .from('users')
-  .select('id', { count: 'exact', head: true })
-  .then(({ error }) => {
-    if (error) logger.error('Supabase connection failed', { error: error.message });
-    else logger.info('Supabase connected');
-  });
+// Verify connectivity at startup.
+// `profiles` is the table this app actually uses — the old check queried a
+// `users` table that the schema never defines, so a perfectly healthy database
+// still reported a failure here.
+async function checkConnection(): Promise<void> {
+  try {
+    const { error } = await supabaseAdmin
+      .from('profiles')
+      .select('id', { count: 'exact', head: true });
+
+    if (!error) {
+      logger.info('Supabase connected', { url: env.SUPABASE_URL });
+      return;
+    }
+
+    // Separate "never reached the server" from "the server said no". Undici
+    // surfaces DNS and connection problems as a bare `fetch failed`, which on
+    // its own says nothing about what to go and look at.
+    const unreachable = /fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT/i
+      .test(error.message);
+
+    if (unreachable) {
+      logger.error('Cannot reach Supabase — the host never responded', {
+        url: env.SUPABASE_URL,
+        cause: error.message,
+        check: 'Does SUPABASE_URL still resolve? A deleted or renamed project returns NXDOMAIN; a paused one resolves but refuses queries.',
+      });
+    } else {
+      logger.error('Supabase answered but the query failed', {
+        url: env.SUPABASE_URL,
+        error: error.message,
+        check: 'Is the schema in sql/ applied, and is SUPABASE_SERVICE_ROLE_KEY from this same project?',
+      });
+    }
+  } catch (err) {
+    logger.error('Supabase connectivity check threw', {
+      url: env.SUPABASE_URL,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+void checkConnection();
