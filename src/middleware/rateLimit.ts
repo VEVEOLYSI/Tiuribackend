@@ -1,4 +1,5 @@
 import { createMiddleware } from 'hono/factory';
+import { getConnInfo } from '@hono/node-server/conninfo';
 import { env } from '../config/env.js';
 import type { AppEnv } from '../types/index.js';
 
@@ -30,10 +31,14 @@ export function sensitiveRateLimit() {
 
 export function rateLimit(max = env.RATE_LIMIT_MAX, windowMs = env.RATE_LIMIT_WINDOW_MS) {
   return createMiddleware<AppEnv>(async (c, next) => {
-    const ip =
-      c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
-      c.req.header('x-real-ip') ??
-      'unknown';
+    // X-Forwarded-For is attacker-controlled unless a proxy we trust rewrote
+    // it. Honouring it blindly lets anyone rotate the header and walk straight
+    // past the login limiter, so it is only read when TRUST_PROXY is set.
+    const ip = env.TRUST_PROXY
+      ? (c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+         c.req.header('x-real-ip') ??
+         'unknown')
+      : (getConnInfo(c).remote.address ?? 'unknown');
 
     const now = Date.now();
     const key = `${ip}:${c.req.path}`;

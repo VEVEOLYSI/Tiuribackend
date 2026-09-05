@@ -34,6 +34,14 @@ const schema = z.object({
   PAYSTACK_PUBLIC_KEY: z.string().min(1),
   PAYSTACK_SECRET_KEY: z.string().min(1),
 
+  // Set to true only when the app really sits behind a proxy that overwrites
+  // X-Forwarded-For (Render, Fly, Nginx). Otherwise the header is forgeable
+  // and rate limiting can be bypassed by rotating it.
+  TRUST_PROXY: z
+    .string()
+    .default(process.env.RENDER ? 'true' : 'false')
+    .transform((v) => v === 'true' || v === '1'),
+
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().default(100),
   METRICS_TOKEN: z.string().optional(),

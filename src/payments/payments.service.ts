@@ -1,4 +1,4 @@
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { supabaseAdmin } from '../config/db.js';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
@@ -97,13 +97,13 @@ export async function initializePayment(
   if (payload.checkout) {
     amount = await resolveCheckoutTotal(payload.checkout);
   } else {
-    amount = await resolvePayableAmount(payload.orderId, payload.bookingId);
+    amount = await resolvePayableAmount(userId, payload.orderId, payload.bookingId);
   }
 
   const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(userId);
   if (!authUser.user?.email) throw new BadRequestError('User email not found');
 
-  const existingRef = await findPendingRef(payload.orderId, payload.bookingId);
+  const existingRef = await findPendingRef(userId, payload.orderId, payload.bookingId);
   if (existingRef) {
     // Expire the stale transaction — user reopened the payment dialog without completing.
     // If they had paid, the webhook would have already marked it 'success'.
@@ -153,7 +153,23 @@ export async function initializePayment(
 
 // ─── Verify payment ───────────────────────────────────────────────────────────
 
-export async function verifyPayment(reference: string) {
+/**
+ * `requesterId` is supplied by the authenticated route so one customer cannot
+ * read the status (and order id) of another customer's payment. The public
+ * Paystack callback omits it — that path is driven by Paystack's own verify
+ * response, not by anything the browser can forge.
+ */
+export async function verifyPayment(reference: string, requesterId?: string) {
+  if (requesterId) {
+    const { data: owned } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id')
+      .eq('gateway_ref', reference)
+      .eq('user_id', requesterId)
+      .maybeSingle();
+    if (!owned) throw new NotFoundError('Payment');
+  }
+
   const data = await paystackRequest<PaystackVerifyData>(
     'GET',
     `/transaction/verify/${encodeURIComponent(reference)}`
@@ -166,7 +182,8 @@ export async function verifyPayment(reference: string) {
       reference,
       orderId || null,
       bookingId || null,
-      { checkoutData, userId }
+      { checkoutData, userId },
+      data.amount / 100
     );
     return { verified: true, status: 'success', reference, orderId: settled.orderId, bookingId };
   }
@@ -199,13 +216,13 @@ export async function chargeCard(
   if (payload.checkout) {
     amount = await resolveCheckoutTotal(payload.checkout);
   } else {
-    amount = await resolvePayableAmount(payload.orderId, payload.bookingId);
+    amount = await resolvePayableAmount(userId, payload.orderId, payload.bookingId);
   }
 
   const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(userId);
   if (!authUser.user?.email) throw new BadRequestError('User email not found');
 
-  const existingRef = await findPendingRef(payload.orderId, payload.bookingId);
+  const existingRef = await findPendingRef(userId, payload.orderId, payload.bookingId);
   const reference = existingRef ?? `wigs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   const chargeBody: Record<string, unknown> = {
@@ -310,7 +327,7 @@ export async function chargeMpesa(
   if (payload.checkout) {
     amount = await resolveCheckoutTotal(payload.checkout);
   } else {
-    amount = await resolvePayableAmount(payload.orderId, payload.bookingId);
+    amount = await resolvePayableAmount(userId, payload.orderId, payload.bookingId);
   }
 
   const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(userId);
@@ -554,7 +571,11 @@ export async function handleWebhook(rawBody: string, signature: string) {
     .update(rawBody)
     .digest('hex');
 
-  if (expected !== signature) {
+  // Constant-time compare so the check cannot be probed byte by byte.
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(signature, 'utf8');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    logger.warn('Rejected Paystack webhook with bad signature');
     throw new BadRequestError('Invalid Paystack webhook signature');
   }
 
@@ -563,6 +584,7 @@ export async function handleWebhook(rawBody: string, signature: string) {
     data: {
       reference: string;
       status: string;
+      amount?: number;
       metadata?: {
         orderId?: string;
         bookingId?: string;
@@ -575,24 +597,33 @@ export async function handleWebhook(rawBody: string, signature: string) {
   logger.info('Paystack webhook received', { event: event.event, reference: event.data.reference });
 
   if (event.event === 'charge.success') {
-    const { reference, metadata } = event.data;
+    const { reference, metadata, amount } = event.data;
     await settlePayment(
       reference,
       metadata?.orderId || null,
       metadata?.bookingId || null,
-      { checkoutData: metadata?.checkoutData, userId: metadata?.userId }
+      { checkoutData: metadata?.checkoutData, userId: metadata?.userId },
+      amount !== undefined ? amount / 100 : undefined
     );
   }
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
-async function resolvePayableAmount(orderId?: string, bookingId?: string): Promise<number> {
+// `userId` scopes the lookup: without it any signed-in customer could name
+// someone else's order id and learn whether it exists, what it costs, and
+// whether it has been paid — and could cancel its pending transaction.
+async function resolvePayableAmount(
+  userId: string,
+  orderId?: string,
+  bookingId?: string
+): Promise<number> {
   if (orderId) {
     const { data } = await supabaseAdmin
       .from('orders')
       .select('total_amount, payment_status')
       .eq('id', orderId)
+      .eq('user_id', userId)
       .single();
 
     if (!data) throw new NotFoundError('Order');
@@ -607,6 +638,7 @@ async function resolvePayableAmount(orderId?: string, bookingId?: string): Promi
       .from('service_bookings')
       .select('price, deposit_amount, status')
       .eq('id', bookingId)
+      .eq('user_id', userId)
       .single();
 
     if (!data) throw new NotFoundError('Booking');
@@ -669,7 +701,11 @@ async function resolveCheckoutTotal(checkout: CheckoutData): Promise<number> {
   return Math.max(0, subtotal - discountAmount + shipping);
 }
 
-async function findPendingRef(orderId?: string, bookingId?: string): Promise<string | null> {
+async function findPendingRef(
+  userId: string,
+  orderId?: string,
+  bookingId?: string
+): Promise<string | null> {
   if (!orderId && !bookingId) return null;
   const field = orderId ? 'order_id' : 'booking_id';
   const id = orderId ?? bookingId;
@@ -678,6 +714,7 @@ async function findPendingRef(orderId?: string, bookingId?: string): Promise<str
     .from('payment_transactions')
     .select('gateway_ref')
     .eq(field, id!)
+    .eq('user_id', userId)
     .eq('gateway', 'paystack')
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
@@ -695,7 +732,8 @@ async function settlePayment(
   reference: string,
   orderId?: string | null,
   bookingId?: string | null,
-  fallback?: { checkoutData?: CheckoutData | null; userId?: string }
+  fallback?: { checkoutData?: CheckoutData | null; userId?: string },
+  paidAmount?: number
 ): Promise<{ orderId?: string }> {
   // Normalise empty-string ids (Paystack sometimes returns "" for null fields)
   const normOrderId = orderId || null;
@@ -704,9 +742,24 @@ async function settlePayment(
   // Fetch the transaction to get checkout_data and guard idempotency
   const { data: txn } = await supabaseAdmin
     .from('payment_transactions')
-    .select('id, status, order_id, booking_id, user_id, checkout_data')
+    .select('id, status, order_id, booking_id, user_id, checkout_data, amount')
     .eq('gateway_ref', reference)
     .maybeSingle();
+
+  // Never mark something paid for less than it costs. The expected amount was
+  // computed server-side at initialize time, so this catches any gateway or
+  // metadata mismatch before an order is released.
+  if (paidAmount !== undefined && txn?.amount != null) {
+    const expected = Number(txn.amount);
+    if (Number.isFinite(expected) && paidAmount + 0.01 < expected) {
+      logger.error('Underpayment rejected', { reference, expected, paidAmount });
+      await supabaseAdmin
+        .from('payment_transactions')
+        .update({ status: 'failed', failure_reason: `Underpaid: got ${paidAmount}, expected ${expected}` })
+        .eq('gateway_ref', reference);
+      throw new BadRequestError('Payment amount does not match the amount due');
+    }
+  }
 
   if (txn?.status === 'success') {
     logger.info('Payment already settled, skipping', { reference });

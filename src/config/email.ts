@@ -1,6 +1,9 @@
 import { Resend } from 'resend';
 import { env } from './env.js';
 import { logger } from './logger.js';
+import {
+  shell, button, codePanel, factTable, note, paragraph, esc, money, OK,
+} from './email-layout.js';
 
 // Resend HTTP API — no SMTP port issues on Render or any cloud host.
 // SMTP_PASS holds the Resend API key (re-used so no extra env var needed).
@@ -46,70 +49,76 @@ export async function sendEmail(payload: EmailPayload): Promise<void> {
   });
 }
 
+// ─── Templates ────────────────────────────────────────────────────────────────
+// Every template goes through `shell` so the whole set looks like one sender,
+// and every interpolated value goes through `esc` because names, service names
+// and order numbers all originate outside this file.
+
+const greet = (name: string) => {
+  const first = String(name ?? '').trim().split(' ')[0];
+  return first ? `Hi ${esc(first)},` : 'Hi there,';
+};
+
 export const templates = {
   otpVerification: (name: string, otp: string) => ({
     subject: 'Your verification code — Tiuri Nails & Wigs Parlour',
-    html: `
-      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px 24px">
-        <div style="text-align:center;margin-bottom:24px">
-          <h1 style="color:#0a2e1f;margin:0 0 8px">Verify your email</h1>
-          <p style="color:#6b7280;margin:0">Hi${name ? ` ${name}` : ''},</p>
-        </div>
-        <p style="color:#374151">Thanks for creating an account with <strong>Tiuri Nails &amp; Wigs Parlour</strong>.
-           Enter the code below to verify your email address and activate your account.</p>
-        <div style="background:#faf6ed;border:1px solid #e0d0b0;border-radius:12px;padding:28px;text-align:center;margin:24px 0">
-          <p style="font-size:11px;font-weight:600;letter-spacing:0.2em;text-transform:uppercase;color:#9a8060;margin:0 0 12px">
-            Your verification code
-          </p>
-          <p style="font-size:40px;font-weight:700;letter-spacing:14px;color:#0a2e1f;margin:0;font-family:monospace">
-            ${otp}
-          </p>
-        </div>
-        <p style="color:#6b7280;font-size:13px;text-align:center">
-          This code expires in <strong>10 minutes</strong>. If you didn't create an account, you can safely ignore this email.
-        </p>
-      </div>`,
+    html: shell({
+      preheader: `${otp} is your Tiuri verification code. It expires in 10 minutes.`,
+      heading: 'Verify your email',
+      body:
+        paragraph(greet(name)) +
+        paragraph('Enter this code to finish setting up your account.') +
+        codePanel(otp, 'Verification code') +
+        note('The code expires in <strong>10 minutes</strong>. If you did not create an account, you can ignore this email.'),
+    }),
     text: `Your Tiuri Nails & Wigs verification code is: ${otp}\n\nThis code expires in 10 minutes.\n\nIf you didn't create an account, ignore this email.`,
   }),
 
-  /** @deprecated kept for password-reset flow only */
+  /** @deprecated kept for the password-reset flow only */
   verifyEmail: (name: string, link: string) => ({
     subject: 'Verify your email — Tiuri Nails & Wigs Parlour',
-    html: `
-      <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-        <h1 style="color:#1a1a1a">Verify your email address</h1>
-        <p>Hi${name ? ` ${name}` : ''},</p>
-        <p>Thanks for registering with Tiuri Nails &amp; Wigs Parlour.
-           Please verify your email address to activate your account.</p>
-        <a href="${link}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:4px;margin:16px 0">
-          Verify Email
-        </a>
-        <p style="color:#666;font-size:13px">
-          This link expires in 24 hours. If you didn't create an account, you can safely ignore this email.
-        </p>
-      </div>`,
+    html: shell({
+      preheader: 'Confirm your email address to activate your Tiuri account.',
+      heading: 'Verify your email address',
+      body:
+        paragraph(greet(name)) +
+        paragraph('Confirm your email address to activate your account.') +
+        button(link, 'Verify email') +
+        note('This link expires in 24 hours. If you did not create an account, you can ignore this email.'),
+    }),
+    text: `Verify your email address: ${link}\n\nThis link expires in 24 hours.`,
   }),
 
   welcome: (name: string) => ({
     subject: 'Your account is active — Tiuri Nails & Wigs Parlour',
-    html: `
-      <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-        <h1 style="color:#1a1a1a">Welcome, ${name}!</h1>
-        <p>Your email has been verified and your account is now active.</p>
-        <a href="${env.FRONTEND_URL}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:4px">
-          Go to App
-        </a>
-      </div>`,
+    html: shell({
+      preheader: 'Your Tiuri account is ready — book a set or shop the shelf.',
+      heading: 'You are all set',
+      body:
+        paragraph(greet(name)) +
+        paragraph('Your email is verified and your account is active. You can book a nail appointment, or browse the wigs and have one held for collection.') +
+        button(env.FRONTEND_URL, 'Book an appointment') +
+        note(`Prefer to shop first? <a href="${esc(env.FRONTEND_URL)}/products" style="color:#55534e">Browse the wigs</a>.`),
+    }),
+    text: `Your Tiuri account is active.\n\nBook an appointment: ${env.FRONTEND_URL}/bookings\nShop wigs: ${env.FRONTEND_URL}/products`,
   }),
 
   orderConfirmed: (orderNumber: string, total: number) => ({
-    subject: `Order Confirmed — ${orderNumber}`,
-    html: `
-      <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-        <h1 style="color:#1a1a1a">Order Confirmed!</h1>
-        <p>Order <strong>${orderNumber}</strong> · KES ${total.toFixed(2)}</p>
-        <p>We'll notify you once your order ships.</p>
-      </div>`,
+    subject: `Order confirmed — ${orderNumber}`,
+    html: shell({
+      preheader: `We have your order ${orderNumber}. We will let you know when it ships.`,
+      heading: 'Order confirmed',
+      body:
+        paragraph('Thanks — your payment went through and your order is being prepared.') +
+        factTable([
+          ['Order number', esc(orderNumber)],
+          ['Total paid', money(total)],
+          ['Status', `<span style="color:${OK}">Confirmed</span>`],
+        ]) +
+        button(`${env.FRONTEND_URL}/account/orders`, 'View your order') +
+        note('We will email you again as soon as it ships.'),
+    }),
+    text: `Order ${orderNumber} confirmed.\nTotal paid: ${money(total)}\n\nView your order: ${env.FRONTEND_URL}/account/orders`,
   }),
 
   bookingConfirmed: (
@@ -121,228 +130,91 @@ export const templates = {
     depositAmount = 0,
     balanceAmount = 0,
   ) => {
-    // Format date: "2026-06-08" → "Sunday, 8 June 2026"
+    // "2026-06-08" → "Sunday, 8 June 2026"
     const fmtDate = new Date(`${date}T00:00:00`).toLocaleDateString('en-KE', {
       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     });
-    // Format time: "09:30:00" → "9:30 AM"
+    // "09:30:00" → "9:30 AM"
     const [hStr, mStr] = time.split(':');
     const h = parseInt(hStr, 10);
     const fmtTime = `${h % 12 || 12}:${mStr} ${h >= 12 ? 'PM' : 'AM'}`;
 
-    const firstName = customerName.trim().split(' ')[0] || 'there';
-    const fmtKes = (n: number) =>
-      `KES ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const rows: Array<[string, string]> = [
+      ['Service', esc(service)],
+      ['Date', esc(fmtDate)],
+      ['Time', esc(fmtTime)],
+      ['Reference', `#${esc(bookingNumber)}`],
+    ];
+    if (depositAmount > 0) {
+      rows.push(['Deposit paid', `<span style="color:${OK}">${money(depositAmount)}</span>`]);
+      rows.push(['Balance at the salon', money(balanceAmount)]);
+    }
 
     return {
-      subject: `✨ You're all booked! — ${service} on ${fmtDate}`,
-      html: `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f0e8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f0e8;padding:32px 16px">
-  <tr><td align="center">
-    <table width="100%" style="max-width:560px;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
-
-      <!-- Header -->
-      <tr>
-        <td style="background:linear-gradient(135deg,#0a2e1f 0%,#1a5c3a 100%);padding:36px 32px;text-align:center">
-          <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;color:#c9a227">
-            Tiuri Nails &amp; Wigs Parlour
-          </p>
-          <h1 style="margin:0;font-size:28px;font-weight:800;color:#ffffff;line-height:1.2">
-            You&rsquo;re all booked! ✨
-          </h1>
-          <p style="margin:12px 0 0;font-size:15px;color:#a8d5b5">
-            We can&rsquo;t wait to make you feel amazing.
-          </p>
-        </td>
-      </tr>
-
-      <!-- Greeting -->
-      <tr>
-        <td style="padding:32px 32px 0">
-          <p style="margin:0;font-size:16px;color:#374151;line-height:1.6">
-            Hi <strong style="color:#0a2e1f">${firstName}</strong> 👋
-          </p>
-          <p style="margin:12px 0 0;font-size:15px;color:#6b7280;line-height:1.7">
-            Your appointment is confirmed and your spot is reserved. Here&rsquo;s everything you need to know before your visit.
-          </p>
-        </td>
-      </tr>
-
-      <!-- Booking details card -->
-      <tr>
-        <td style="padding:24px 32px">
-          <table width="100%" cellpadding="0" cellspacing="0"
-                 style="background:#faf6ed;border:1.5px solid #e8d9b8;border-radius:16px;overflow:hidden">
-            <tr>
-              <td style="padding:20px 24px;border-bottom:1px solid #e8d9b8">
-                <p style="margin:0 0 4px;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:#c9a227">
-                  Your Appointment
-                </p>
-                <p style="margin:0;font-size:20px;font-weight:800;color:#0a2e1f">${service}</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:0">
-                <table width="100%" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <td style="padding:16px 24px;border-bottom:1px solid #e8d9b8;width:50%">
-                      <p style="margin:0 0 3px;font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#9a8060">📅 Date</p>
-                      <p style="margin:0;font-size:14px;font-weight:600;color:#0a2e1f">${fmtDate}</p>
-                    </td>
-                    <td style="padding:16px 24px;border-bottom:1px solid #e8d9b8;border-left:1px solid #e8d9b8">
-                      <p style="margin:0 0 3px;font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#9a8060">⏰ Time</p>
-                      <p style="margin:0;font-size:14px;font-weight:600;color:#0a2e1f">${fmtTime}</p>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td colspan="2" style="padding:16px 24px">
-                      <p style="margin:0 0 3px;font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#9a8060">🔖 Booking Reference</p>
-                      <p style="margin:0;font-size:14px;font-weight:700;color:#0a2e1f;font-family:monospace;letter-spacing:0.06em">#${bookingNumber}</p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-
-      ${depositAmount > 0 ? `
-      <!-- Payment summary -->
-      <tr>
-        <td style="padding:0 32px 24px">
-          <table width="100%" cellpadding="0" cellspacing="0"
-                 style="background:#0a2e1f;border-radius:16px;overflow:hidden">
-            <tr>
-              <td style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.1)">
-                <p style="margin:0;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:#c9a227">
-                  💳 Payment Summary
-                </p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:16px 24px;border-bottom:1px solid rgba(255,255,255,0.08)">
-                <table width="100%" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <td><p style="margin:0;font-size:13px;color:#a8d5b5">Deposit paid ✅</p></td>
-                    <td align="right"><p style="margin:0;font-size:13px;font-weight:700;color:#ffffff">${fmtKes(depositAmount)}</p></td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:16px 24px">
-                <table width="100%" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <td><p style="margin:0;font-size:13px;color:#a8d5b5">Balance payable at salon</p></td>
-                    <td align="right"><p style="margin:0;font-size:15px;font-weight:800;color:#c9a227">${fmtKes(balanceAmount)}</p></td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>` : ''}
-
-      <!-- Location -->
-      <tr>
-        <td style="padding:0 32px 24px">
-          <table width="100%" cellpadding="0" cellspacing="0"
-                 style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:16px;padding:20px 24px">
-            <tr>
-              <td>
-                <p style="margin:0 0 8px;font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:#9a8060">📍 Where to find us</p>
-                <p style="margin:0 0 4px;font-size:14px;font-weight:600;color:#0a2e1f">Jewel Complex, Room 220</p>
-                <p style="margin:0 0 12px;font-size:13px;color:#6b7280">2nd Floor, TRM Drive, Nairobi</p>
-                <a href="https://www.google.com/maps/search/?api=1&query=Tiuri+Nails+%26+Wigs+Parlour,+Jewel+Complex,+Room+220,+2nd+Floor+TRM+Dr,+Nairobi"
-                   style="display:inline-block;padding:8px 16px;background:#0a2e1f;color:#ffffff;text-decoration:none;border-radius:8px;font-size:12px;font-weight:600">
-                  Get Directions →
-                </a>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-
-      <!-- Tips -->
-      <tr>
-        <td style="padding:0 32px 24px">
-          <p style="margin:0 0 12px;font-size:13px;font-weight:700;color:#374151">Before your visit 💡</p>
-          <table width="100%" cellpadding="0" cellspacing="0">
-            <tr>
-              <td style="padding:6px 0">
-                <p style="margin:0;font-size:13px;color:#6b7280">✔ Please arrive <strong>5–10 minutes early</strong> so we can get started on time.</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:6px 0">
-                <p style="margin:0;font-size:13px;color:#6b7280">✔ Need to reschedule? Contact us <strong>at least 24 hours</strong> before your appointment.</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:6px 0">
-                <p style="margin:0;font-size:13px;color:#6b7280">✔ Have questions? We&rsquo;re here to help — reply to this email or WhatsApp us.</p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-
-      <!-- CTA -->
-      <tr>
-        <td style="padding:0 32px 32px;text-align:center">
-          <p style="margin:0 0 20px;font-size:15px;color:#6b7280">We&rsquo;re so excited to see you, ${firstName}! 💅</p>
-          <a href="${env.FRONTEND_URL}/account/bookings"
-             style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#f0d878,#c9a227);color:#0a2e1f;text-decoration:none;border-radius:12px;font-size:14px;font-weight:800;letter-spacing:0.03em">
-            View My Booking
-          </a>
-        </td>
-      </tr>
-
-      <!-- Footer -->
-      <tr>
-        <td style="background:#f5f0e8;padding:24px 32px;text-align:center;border-top:1px solid #e8d9b8">
-          <p style="margin:0 0 4px;font-size:12px;font-weight:700;color:#0a2e1f">Tiuri Nails &amp; Wigs Parlour</p>
-          <p style="margin:0;font-size:11px;color:#9a8060">Jewel Complex, Room 220, 2nd Floor TRM Drive, Nairobi</p>
-          <p style="margin:8px 0 0;font-size:11px;color:#c9b99a">
-            You received this because you made a booking with us.
-          </p>
-        </td>
-      </tr>
-
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>`,
-      text: `Hi ${firstName},\n\nYour booking is confirmed!\n\nService: ${service}\nDate: ${fmtDate}\nTime: ${fmtTime}\nRef: #${bookingNumber}\n${depositAmount > 0 ? `\nDeposit paid: ${fmtKes(depositAmount)}\nBalance at salon: ${fmtKes(balanceAmount)}\n` : ''}\nLocation: Jewel Complex, Room 220, 2nd Floor TRM Drive, Nairobi\n\nPlease arrive 5–10 minutes early. To reschedule, contact us at least 24 hours in advance.\n\nWe can't wait to see you!\n— Tiuri Nails & Wigs Parlour`,
+      subject: `Booking confirmed — ${fmtDate}, ${fmtTime}`,
+      html: shell({
+        preheader: `${service} on ${fmtDate} at ${fmtTime}. Reference #${bookingNumber}.`,
+        heading: 'Your booking is confirmed',
+        body:
+          paragraph(greet(customerName)) +
+          paragraph('Your chair is booked. Here are the details.') +
+          factTable(rows) +
+          paragraph('Please arrive 5 to 10 minutes early. To reschedule, let us know at least 24 hours ahead.') +
+          button(`${env.FRONTEND_URL}/account/bookings`, 'View your booking'),
+      }),
+      text: `Hi ${customerName || 'there'},\n\nYour booking is confirmed.\n\nService: ${service}\nDate: ${fmtDate}\nTime: ${fmtTime}\nRef: #${bookingNumber}\n${depositAmount > 0 ? `\nDeposit paid: ${money(depositAmount)}\nBalance at salon: ${money(balanceAmount)}\n` : ''}\nJewel Complex, Room 220, 2nd Floor, TRM Drive, Nairobi\n\nPlease arrive 5–10 minutes early. To reschedule, contact us at least 24 hours in advance.\n\n— Tiuri Nails & Wigs Parlour`,
     };
   },
 
   passwordReset: (link: string) => ({
-    subject: 'Reset Your Password',
-    html: `
-      <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-        <h1 style="color:#1a1a1a">Reset Your Password</h1>
-        <p>Click the button below to reset your password. This link expires in 1 hour.</p>
-        <a href="${link}" style="display:inline-block;padding:12px 24px;background:#000;color:#fff;text-decoration:none;border-radius:4px">
-          Reset Password
-        </a>
-        <p style="color:#666;font-size:13px;margin-top:16px">
-          If you didn't request this, you can safely ignore this email.
-        </p>
-      </div>`,
+    subject: 'Reset your password — Tiuri Nails & Wigs Parlour',
+    html: shell({
+      preheader: 'Reset your Tiuri password. This link expires in 1 hour.',
+      heading: 'Reset your password',
+      body:
+        paragraph('Use the button below to choose a new password.') +
+        button(link, 'Reset password') +
+        note('This link expires in <strong>1 hour</strong>. If you did not ask to reset your password, you can ignore this email — nothing has changed.'),
+    }),
+    text: `Reset your Tiuri password: ${link}\n\nThis link expires in 1 hour. If you didn't request it, ignore this email.`,
   }),
 
   orderStatusUpdate: (orderNumber: string, status: string) => ({
-    subject: `Order Update — ${orderNumber}`,
-    html: `
-      <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-        <h1 style="color:#1a1a1a">Order Status Update</h1>
-        <p>Your order <strong>${orderNumber}</strong> is now <strong>${status}</strong>.</p>
-      </div>`,
+    subject: `Order update — ${orderNumber}`,
+    html: shell({
+      preheader: `Order ${orderNumber} is now ${status}.`,
+      heading: 'Your order has moved on',
+      body:
+        factTable([
+          ['Order number', esc(orderNumber)],
+          ['Status', `<span style="color:${OK}">${esc(status)}</span>`],
+        ]) +
+        button(`${env.FRONTEND_URL}/account/orders`, 'Track your order'),
+    }),
+    text: `Order ${orderNumber} is now ${status}.\n\nTrack it: ${env.FRONTEND_URL}/account/orders`,
+  }),
+
+  /** Internal — the shop's own copy of a contact-form submission. */
+  contactMessage: (input: {
+    name: string; email: string; phone?: string; subject: string; message: string;
+  }) => ({
+    subject: `[Contact] ${input.subject}`,
+    html: shell({
+      preheader: `${input.name} sent a message about ${input.subject}.`,
+      heading: 'New contact message',
+      body:
+        factTable([
+          ['Name', esc(input.name)],
+          ['Email', `<a href="mailto:${esc(input.email)}" style="color:#55534e">${esc(input.email)}</a>`],
+          ...(input.phone ? [['Phone', esc(input.phone)] as [string, string]] : []),
+          ['Subject', esc(input.subject)],
+        ]) +
+        `<div style="margin:24px 0;padding:20px;background:#f4f4f2;border:1px solid #dedcd7;border-radius:8px">
+           <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;color:#8b8881;margin-bottom:10px">Message</div>
+           <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;color:#171614;white-space:pre-wrap">${esc(input.message)}</div>
+         </div>` +
+        note(`Reply to this email to answer ${esc(input.name)} directly.`),
+    }),
+    text: `New contact message from ${input.name} (${input.email})${input.phone ? ` · ${input.phone}` : ''}\n\nSubject: ${input.subject}\n\n${input.message}`,
   }),
 };

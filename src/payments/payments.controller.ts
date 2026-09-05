@@ -31,8 +31,9 @@ export const initialize = async (c: Context<AppEnv>) => {
 
 // GET /api/v1/payments/paystack/verify/:reference
 export const verify = async (c: Context<AppEnv>) => {
+  const user = c.get('user')!;
   const { reference } = c.req.param();
-  return ok(c, await svc.verifyPayment(reference));
+  return ok(c, await svc.verifyPayment(reference, user.id));
 };
 
 // GET /api/v1/payments/paystack/callback  (Paystack redirect)
